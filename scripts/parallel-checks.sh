@@ -1,0 +1,1 @@
+../../ariadne/scripts/parallel-checks.sh

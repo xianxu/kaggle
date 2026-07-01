@@ -1,0 +1,1 @@
+../../ariadne/scripts/pre-merge-checks.sh

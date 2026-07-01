@@ -1,0 +1,17 @@
+# kaggle base.manifest — kaggle's module declaration for the weave layer compiler.
+#
+# kaggle is the platform-integration SUBSTRATE layer: it consumes metis (construct/deps
+# `substrate ../metis`, transitively ariadne) and is itself consumed by kbench. It
+# inherits the EXPORTED base layer through that edge, and will EXPORT its own Kaggle
+# step-types (download, submit) + Competition/Submission/Leaderboard tooling downstream
+# via `export` rows added as those land (kaggle-ml-base-layer, kaggle#1). For now it
+# declares only its OWN internal constitution.
+#
+# Format and verbs: see ariadne's construct/base.manifest. The leading `internal`
+# token (ariadne#99) keeps an artifact with this repo (selected only on its own
+# self-walk); an ancestor's internal artifacts never leak DOWN into a consumer's
+# composed AGENTS.md (the #95 fix). NOTE: shipping a base.manifest is ALSO what marks
+# kaggle as a TRAVERSABLE layer — without it, kbench's weave walk stops at kaggle.
+
+# ── Constitution ──────────────────────────────────────────────────────────────
+internal  prose AGENTS.local.md

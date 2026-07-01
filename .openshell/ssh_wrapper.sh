@@ -1,0 +1,1 @@
+../../ariadne/.openshell/ssh_wrapper.sh
