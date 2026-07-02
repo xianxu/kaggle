@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# kaggle/download — step-type wrapper. The metis runner invokes this with cwd ==
+# the step dir and the METIS_* env set (absolute paths). Resolve the kaggle repo
+# root from $0 (NOT cwd — cwd is the run dir, outside this module) and hand off to
+# the Go entrypoint via `go run -C "$ROOT"`, which chdirs go to the module root so
+# the module + its deps resolve. The step reads every path from the METIS_* env, so
+# its own cwd is irrelevant. Mirrors metis's committed steps/metis/* wrappers.
+# See metis/atlas/experiment.md "### Step-executable contract".
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+exec go run -C "$ROOT" ./cmd/kaggle-download "$@"
