@@ -81,6 +81,9 @@ func run() error {
 		return err
 	}
 	if !scored {
+		if sub.Status == kaggle.StatusError {
+			return fmt.Errorf("%q submission rejected by kaggle (status=error) — see submission.json", w.Competition.Slug)
+		}
 		return fmt.Errorf("%q not scored after %d attempts (submission.json status=%s)", w.Competition.Slug, maxAttempts, sub.Status)
 	}
 	return ctx.WriteMetrics(map[string]float64{"public_score": *sub.PublicScore})
@@ -107,7 +110,13 @@ func pollScore(submissionsFn func() (string, error), maxAttempts int, sleep func
 			return s, true, nil
 		}
 		if len(subs) > 0 {
-			last = subs[0] // newest pending row, for the debug record on timeout
+			last = subs[0] // newest row, for the debug record on timeout/error
+			// Terminal error: Kaggle rejected the submission (e.g. bad format) — it
+			// will NEVER score, so fast-fail instead of burning the whole poll
+			// budget. The caller distinguishes this from a timeout by Status.
+			if last.Status == kaggle.StatusError {
+				return last, false, nil
+			}
 		}
 		if attempt < maxAttempts {
 			sleep(attempt)
@@ -125,15 +134,19 @@ func writeSubmission(ctx stepio.Context, sub kaggle.Submission) error {
 }
 
 func envInt(name string, def int) int {
-	if v := os.Getenv(name); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
+	v := os.Getenv(name)
+	if v == "" {
+		return def
 	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
+	}
+	fmt.Fprintf(os.Stderr, "kaggle/submit: ignoring malformed %s=%q, using %d\n", name, v, def)
 	return def
 }
 
 // envDuration accepts a Go duration ("5s", "0") or a bare integer read as seconds.
+// A malformed value warns (rather than silently defaulting — a hidden misconfig).
 func envDuration(name string, def time.Duration) time.Duration {
 	v := os.Getenv(name)
 	if v == "" {
@@ -145,5 +158,6 @@ func envDuration(name string, def time.Duration) time.Duration {
 	if n, err := strconv.Atoi(v); err == nil {
 		return time.Duration(n) * time.Second
 	}
+	fmt.Fprintf(os.Stderr, "kaggle/submit: ignoring malformed %s=%q, using %s\n", name, v, def)
 	return def
 }

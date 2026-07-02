@@ -57,6 +57,30 @@ func TestPollScore_TimeoutReturnsPending(t *testing.T) {
 	}
 }
 
+// TestPollScore_TerminalErrorFastFails proves a rejected submission (status=error)
+// fast-fails on the first poll instead of burning the whole retry budget — no
+// sleep, exactly one poll.
+func TestPollScore_TerminalErrorFastFails(t *testing.T) {
+	calls := 0
+	subFn := func() (string, error) {
+		calls++
+		return kaggle.FormatSubmissionsCSV([]kaggle.Submission{{File: "s.csv", Status: kaggle.StatusError}}), nil
+	}
+	sub, scored, err := pollScore(subFn, 30, func(int) { t.Fatal("must not sleep on a terminal error") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scored {
+		t.Error("status=error must not be scored")
+	}
+	if sub.Status != kaggle.StatusError {
+		t.Errorf("status = %q, want error", sub.Status)
+	}
+	if calls != 1 {
+		t.Errorf("polls = %d, want 1 (fast-fail, no budget burn)", calls)
+	}
+}
+
 // TestRun_SubmitsAndPollsToScore is the subprocess-integration proof: run() drives
 // the real fake through submit → poll → scored, writing a scored submission.json +
 // metrics.json{public_score}. KAGGLE_FAKE_SCORE_AFTER=1 forces the poll to iterate.
@@ -114,5 +138,16 @@ func TestRun_TimeoutFailsWithPendingRecord(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stepDir, "metrics.json")); err == nil {
 		t.Error("metrics.json must not exist for an unscored (failed) run")
+	}
+}
+
+// TestRun_MissingUpstreamArtifact: submit errors (before any CLI call) when the
+// upstream step's submission.csv is absent — a fixture is not an upstream artifact.
+func TestRun_MissingUpstreamArtifact(t *testing.T) {
+	kaggletest.WireStep(t, "submit",
+		`{"competition":{"slug":"titanic"},"submission":"make-submission"}`)
+	// deliberately no WriteUpstream — the artifact does not exist
+	if err := run(); err == nil {
+		t.Fatal("run with missing upstream submission.csv: want error, got nil")
 	}
 }

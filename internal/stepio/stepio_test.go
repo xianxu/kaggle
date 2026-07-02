@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,7 +47,7 @@ func TestNew_RequiresVars(t *testing.T) {
 			if err == nil {
 				t.Fatalf("New with %s unset: want error, got nil", missing)
 			}
-			if !contains(err.Error(), missing) {
+			if !strings.Contains(err.Error(), missing) {
 				t.Errorf("error %q should name the missing var %q", err, missing)
 			}
 		})
@@ -120,13 +121,4 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

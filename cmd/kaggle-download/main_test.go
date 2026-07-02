@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,5 +33,39 @@ func TestRun_RejectsMissingSlug(t *testing.T) {
 	kaggletest.WireStep(t, "download", `{"competition":{}}`)
 	if err := run(); err == nil {
 		t.Fatal("run with empty competition slug: want error, got nil")
+	}
+}
+
+// TestUnzip_RejectsZipSlip pins the zip-slip guard: an entry escaping destDir via
+// ../ is refused, not written outside the step dir.
+func TestUnzip_RejectsZipSlip(t *testing.T) {
+	dir := t.TempDir()
+	zpath := filepath.Join(dir, "evil.zip")
+	f, err := os.Create(zpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("../escape.txt") // malicious entry
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("pwned")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	dest := filepath.Join(dir, "out")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := unzip(zpath, dest); err == nil {
+		t.Fatal("unzip must reject a ../ escape entry")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "escape.txt")); err == nil {
+		t.Error("zip-slip wrote outside destDir")
 	}
 }
