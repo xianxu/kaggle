@@ -206,3 +206,10 @@ go 1.26.3
 - Reuse from ariadne: `pkg/frontmatter` (if a markdown record is needed); metis `pkg/experiment` (types) if the step ever parses an experiment (it shouldn't — steps read only `with.json`)
 - Carried-forward constraints: `kbench/workshop/issues/000001-*.md` `## Log`
 - Official Kaggle CLI: `kaggle competitions {download,submit,submissions}` surface
+
+## Revisions
+
+### 2026-07-01 — M1 shipped + boundary review (FIX-THEN-SHIP → fixed)
+- **Exported names.** The Core-concepts tables/prose above wrote `credentialSource`/`parseSubmissions`/`latestScored` lowercase; the code exports them (`CredentialSource`/`ParseSubmissions`/`LatestScored`, plus `FormatSubmissionsCSV`) because `internal/kagglecli` and `cmd/fake-kaggle` consume them across package boundaries. The design is otherwise as written.
+- **Parser hardened (review Important).** `ParseSubmissions` no longer fails the whole list on one non-numeric `publicScore` cell — an unparseable score degrades that row to unscored (`nil`), so `LatestScored` still finds the newest validly-scored row. Added tests for both error branches (bad-float → row unscored; missing `fileName` column → error). Also dropped `csv.Reader.Comment='#'` from the production parser (it was shaping behavior off the authored fixture) — the test now strips the fixture's provenance header itself, keeping the parser fixture-agnostic.
+- **M2 note from the review:** confirm the e2e actually fails on a renamed `METIS_*` var (reads the real metis-emitted env, not `stepio`'s own consts echoed back) — else Decision A2's "drift caught by the e2e" guard is illusory. Detail this when planning M2.

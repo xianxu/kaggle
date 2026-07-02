@@ -57,6 +57,7 @@ Derivation (AI-paired ship-wall-clock, v3.1): **M1** = `greenfield-go-module` (p
 ## Log
 
 ### 2026-07-01
+- 2026-07-01: closed M1 — go test ./... + go vet green (pkg/kaggle, internal/kagglecli, cmd/fake-kaggle); TestClientAgainstFake proves submit→poll→scored iterates through pending (scored poll #2). CredentialSource IO-free, fixture authored-not-captured, fake models async transition — all re-verified in main. actual N/A: measured 5.23h is session-contaminated (metis+kaggle interleaved, active-time double-counts); flagged to protect calibration.; review verdict: FIX-THEN-SHIP
 
 Created from the `kaggle-ml-base-layer` project brainstorm (brain `data/project/kaggle-ml-base-layer.md`). Depends on metis#1 (the step-runner + step-type contract + Dataset envelope). Layer: `kbench → kaggle → metis → ariadne`.
 

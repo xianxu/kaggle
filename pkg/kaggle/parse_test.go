@@ -3,15 +3,30 @@ package kaggle
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// stripComments drops the authored fixture's `#` provenance header — the
+// production parser is fixture-agnostic (no comment handling), so the test that
+// feeds it the fixture strips the header itself.
+func stripComments(s string) string {
+	var keep []string
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "#") {
+			continue
+		}
+		keep = append(keep, ln)
+	}
+	return strings.Join(keep, "\n")
+}
 
 func TestParseSubmissions(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "submissions.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	subs, err := ParseSubmissions(string(raw))
+	subs, err := ParseSubmissions(stripComments(string(raw)))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -53,6 +68,40 @@ func TestParseSubmissionsReordered(t *testing.T) {
 	if len(subs) != 1 || subs[0].File != "x.csv" || subs[0].Status != StatusComplete ||
 		subs[0].PublicScore == nil || *subs[0].PublicScore != 0.5 {
 		t.Fatalf("reordered parse wrong: %+v", subs)
+	}
+}
+
+// A single non-numeric publicScore (e.g. "-" on an errored/pending row) must NOT
+// discard the valid rows — it degrades that one row to unscored. This is the
+// fragile boundary M2's poll loop leans on (review FIX-THEN-SHIP Important).
+func TestParseSubmissionsBadScoreDegrades(t *testing.T) {
+	csv := "fileName,status,publicScore\n" +
+		"good.csv,complete,0.81\n" +
+		"weird.csv,error,-\n"
+	subs, err := ParseSubmissions(csv)
+	if err != nil {
+		t.Fatalf("a bad score must not fail the whole parse: %v", err)
+	}
+	if len(subs) != 2 {
+		t.Fatalf("want both rows kept, got %d: %+v", len(subs), subs)
+	}
+	if !subs[0].Scored() || *subs[0].PublicScore != 0.81 {
+		t.Errorf("good row lost its score: %+v", subs[0])
+	}
+	if subs[1].Scored() {
+		t.Errorf("row with non-numeric score should be unscored: %+v", subs[1])
+	}
+	if best, ok := LatestScored(subs); !ok || best.File != "good.csv" {
+		t.Errorf("LatestScored should find good.csv past the bad row, got %+v ok=%v", best, ok)
+	}
+}
+
+// A header lacking the fileName column is structurally malformed → error (we can't
+// identify submissions without it).
+func TestParseSubmissionsMissingFileNameColumn(t *testing.T) {
+	csv := "status,publicScore\ncomplete,0.5\n"
+	if _, err := ParseSubmissions(csv); err == nil {
+		t.Fatal("want an error when the fileName column is missing")
 	}
 }
 

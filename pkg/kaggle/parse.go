@@ -27,16 +27,19 @@ var submissionsCSVHeader = []string{colFileName, colDate, colDescription, colSta
 
 // ParseSubmissions turns `kaggle competitions submissions --csv` stdout into typed
 // Submissions. Header-driven: columns are looked up by NAME, not index, so a CLI
-// that reorders columns still parses. `#`-prefixed lines are skipped (lets the
-// authored fixture carry provenance; real CLI output has none). An empty
-// publicScore cell → nil (unscored). Pure — no IO. Competition is left empty (the
+// that reorders columns still parses. An empty OR non-numeric publicScore cell →
+// nil (unscored): a single odd score (e.g. "-"/"None" on an errored or pending
+// row) must NOT discard every valid row — LatestScored skips unscored rows and
+// finds the newest validly-scored one. Pure — no IO. Competition is left empty (the
 // CLI output is already scoped by `-c <slug>`; the submit step fills it).
+//
+// The production parser is fixture-agnostic (no comment-line handling); the test
+// strips the authored fixture's provenance header before calling this.
 func ParseSubmissions(out string) ([]Submission, error) {
 	if strings.TrimSpace(out) == "" {
 		return nil, nil
 	}
 	r := csv.NewReader(strings.NewReader(out))
-	r.Comment = '#'
 	r.FieldsPerRecord = -1 // tolerate ragged rows (a trailing empty score column)
 	rows, err := r.ReadAll()
 	if err != nil {
@@ -70,11 +73,9 @@ func ParseSubmissions(out string) ([]Submission, error) {
 			Status:      get(row, colStatus),
 		}
 		if ps := get(row, colPublicScore); ps != "" {
-			v, err := strconv.ParseFloat(ps, 64)
-			if err != nil {
-				return nil, fmt.Errorf("kaggle: bad publicScore %q for %q: %w", ps, s.File, err)
+			if v, err := strconv.ParseFloat(ps, 64); err == nil {
+				s.PublicScore = &v // else leave unscored (nil); don't fail the whole parse
 			}
-			s.PublicScore = &v
 		}
 		subs = append(subs, s)
 	}
