@@ -1,0 +1,9 @@
+# AUTHORED fixture — NOT captured (this repo has no kaggle CLI). Provenance:
+# the Kaggle CLI docs for `kaggle competitions submissions --csv`. VALIDATE these
+# column names + the status vocabulary against the FIRST live capture; the fake
+# and the parser co-derive from this schema, so it is the one unverified point.
+# Rows are newest-first (Kaggle's ordering); the newest here is pending (unscored).
+fileName,date,description,status,publicScore,privateScore
+submission_pending.csv,2026-07-01T15:00:00Z,pending upload,pending,,
+submission_v2.csv,2026-07-01T14:30:00Z,rf baseline,complete,0.78229,0.77500
+submission_v1.csv,2026-07-01T12:00:00Z,logreg baseline,complete,0.76555,0.75200
