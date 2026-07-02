@@ -1,11 +1,12 @@
 ---
 id: 000001
-status: open
+status: working
 deps: [metis#1]
 github_issue:
 created: 2026-07-01
 updated: 2026-07-01
 estimate_hours:
+started: 2026-07-01T22:27:10-07:00
 ---
 
 # kaggle platform integration: Competition/Submission/Leaderboard + download/submit step-types wrapping the official CLI
