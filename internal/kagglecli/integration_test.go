@@ -1,24 +1,15 @@
 package kagglecli
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
+	"github.com/xianxu/kaggle/internal/kaggletest"
 	"github.com/xianxu/kaggle/pkg/kaggle"
 )
 
 // buildFake compiles cmd/fake-kaggle into a temp dir and returns its path.
 func buildFake(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "fake-kaggle")
-	cmd := exec.Command("go", "build", "-o", bin, "github.com/xianxu/kaggle/cmd/fake-kaggle")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("build fake: %v", err)
-	}
-	return bin
+	return kaggletest.BuildBin(t, "github.com/xianxu/kaggle/cmd/fake-kaggle", "")
 }
 
 // TestClientAgainstFake is the M1 proof: the injectable CLI + the pure parsers +
