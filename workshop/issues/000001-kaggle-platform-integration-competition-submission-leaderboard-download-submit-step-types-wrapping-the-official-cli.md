@@ -32,7 +32,7 @@ Design from the 2026-07-01 brainstorm. **Scope Go to the STATE, ride the officia
 
 ## Plan
 
-- [ ] M1 — kaggle library: `Competition`/`Submission` records + pure CLI-output parsers (`parseSubmissions`/`latestScored`) + pure `credentialSource`; `internal/kagglecli` injectable `${KAGGLE_CLI}` client; process-level fake `kaggle` (zip download + async pending→scored submit); client-vs-fake integration test
+- [x] M1 — kaggle library: `Competition`/`Submission` records + pure CLI-output parsers (`parseSubmissions`/`latestScored`) + pure `credentialSource`; `internal/kagglecli` injectable `${KAGGLE_CLI}` client; process-level fake `kaggle` (zip download + async pending→scored submit); client-vs-fake integration test
 - [ ] M2 — integration: Go step-side contract reader (`internal/stepio`); `kaggle/download` + `kaggle/submit` step-types over the metis contract; e2e (`download → make-submission → submit`) under `metis run` against the fake; atlas + whole-issue close
 
 Durable plan (per-file/per-test detail, Core concepts, open decisions): [`workshop/plans/000001-kaggle-platform-integration-plan.md`](../plans/000001-kaggle-platform-integration-plan.md). M1 detailed; M2 sketched (re-run `sdlc start-plan` before detailing it).
@@ -61,6 +61,8 @@ Derivation (AI-paired ship-wall-clock, v3.1): **M1** = `greenfield-go-module` (p
 Created from the `kaggle-ml-base-layer` project brainstorm (brain `data/project/kaggle-ml-base-layer.md`). Depends on metis#1 (the step-runner + step-type contract + Dataset envelope). Layer: `kbench → kaggle → metis → ariadne`.
 
 Claimed + planned (durable plan written, fresh-eyes reviewed). Design: **Go owns STATE, official CLI owns TRANSPORT**; pure `pkg/kaggle` (records + parsers), thin injectable `internal/kagglecli`, Go step-types honoring the metis contract, process-level fake for a hermetic e2e. Contract-fidelity check against `metis/cmd/metis/exec.go` came back clean.
+
+**M1 shipped (pending boundary review + close).** The kaggle library: a **pure** `pkg/kaggle` (`ARCH-PURE`, table-tested, zero IO) — `Competition`/`Submission` records + the single CLI-text↔state boundary `ParseSubmissions`/`LatestScored`/`FormatSubmissionsCSV` (header-driven, order-independent) + the pure `CredentialSource` decision. A **thin IO seam** `internal/kagglecli` shelling an injectable `${KAGGLE_CLI:-kaggle}` (no parsing; auth decision deferred to the pure fn; precheck skipped only on explicit `KAGGLE_FAKE=1`, not a binary-name match). A **process-level fake** `cmd/fake-kaggle` that emits a real-shaped `.zip` on download and models the **async scoring transition** (`pending` for the first `KAGGLE_FAKE_SCORE_AFTER` polls, then `complete`+scored). `FormatSubmissionsCSV` gives fake+parser **one** schema (`ARCH-DRY`) — with the honest residual gap that neither is validated against real Kaggle (the fixture is *authored*, not captured; validate on first live run). Verification: `go test ./...` green; the `TestClientAgainstFake` integration test proves the submit→poll→scored flow **iterates through pending** (scored on poll #2). `Leaderboard` deferred (YAGNI). Delegated to a full-context implementation fork.
 
 ## Revisions
 
