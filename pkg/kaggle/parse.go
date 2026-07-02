@@ -85,6 +85,12 @@ func ParseSubmissions(out string) ([]Submission, error) {
 // LatestScored returns the newest Submission carrying a public score. Kaggle lists
 // submissions newest-first, so the first scored row is the newest scored; ok is
 // false when none are scored yet. Pure.
+//
+// NOTE: this is a "best current score across ALL submissions" query. It is NOT the
+// right selector for correlating a JUST-uploaded submission to its score — that
+// must key off the newest row (subs[0]) matched to the uploaded file, else a
+// competition with prior scored submissions reports an older one's score. See
+// cmd/kaggle-submit/main.go pollScore.
 func LatestScored(subs []Submission) (Submission, bool) {
 	for _, s := range subs {
 		if s.Scored() {

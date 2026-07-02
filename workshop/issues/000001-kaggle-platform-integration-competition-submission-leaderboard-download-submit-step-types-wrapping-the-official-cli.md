@@ -1,12 +1,13 @@
 ---
 id: 000001
-status: working
+status: done
 deps: [metis#1]
 github_issue:
 created: 2026-07-01
-updated: 2026-07-01
+updated: 2026-07-02
 estimate_hours: 3.5
 started: 2026-07-01T22:27:10-07:00
+actual_hours: N/A
 ---
 
 # kaggle platform integration: Competition/Submission/Leaderboard + download/submit step-types wrapping the official CLI
@@ -57,8 +58,10 @@ Derivation (AI-paired ship-wall-clock, v3.1): **M1** = `greenfield-go-module` (p
 ## Log
 
 ### 2026-07-02 — M2 shipped (step-types + integration; pending boundary review + close)
+- 2026-07-02: closed — Issue Done-when met: kaggle/download + kaggle/submit run under REAL metis run (e2e TestKaggleThread_EndToEnd PASS) — auth+pull Titanic data as loose files, submit + bounded async-score poll → typed SCORED Submission + public_score; process-level fake backs CI (no live Kaggle). go test ./... + go vet green; M2 boundary review FIX-THEN-SHIP→fixed. Done-when #3 (kbench live thread) is the separable downstream consumer (kbench#1). Live-Kaggle code-complete, NOT live-verified (no CLI/creds); one unverified point = authored submissions.csv schema. actual N/A: whole-issue 6.43h measure carries M1 21% interleaving contamination (M1 already excluded its 5.23h) + M2 bg-job telemetry under-count — N/A protects calibration per M1.; review verdict: FIX-THEN-SHIP
 - 2026-07-02: closed M2 — go test ./... green incl e2e TestKaggleThread_EndToEnd PASS: download→make-submission→submit under REAL metis run → run.json ok, public_score>0, scored submission.json, loose (non-zip) download data. Drift-guard PROVEN (drifted METIS_* const → e2e RED). go vet clean. Fake-verified; live-Kaggle code-complete not live-verified. actual N/A: bg-job telemetry under-count (0.27h M2-window); whole-issue 6.43h M1-contaminated, not M2-scoped.; review verdict: FIX-THEN-SHIP
-- **FIX-THEN-SHIP resolved (before crossing the boundary).** Review had zero Critical; the one Important — `kaggle/submit` polling the whole budget on a terminal `error` status instead of fast-failing — is fixed (`pollScore` returns immediately on `StatusError`; `run()` emits a distinct rejected-vs-timeout message). Also folded in the flagged coverage/quality items: zip-slip adversarial test, submit missing-upstream test, `envInt/envDuration` warn-on-malformed, `strings.Contains`. `go test ./...` + `go vet` green.
+- **Close-review Critical FIXED (whole-issue boundary).** The end-of-issue integration review caught a correctness bug both milestone reviews missed: `kaggle/submit` picked its score via `LatestScored` (any scored row), uncorrelated to the file uploaded — on a live competition with prior scored submissions it would report an OLDER submission's score. Fixed: `pollScore` now keys off the newest (just-uploaded) row, filename-correlated; `LatestScored` demoted to a "best-score" query. Upgraded the fake (`KAGGLE_FAKE_PRIOR_SCORE`) + added pure + e2e regressions (both fail under the old logic). Fixed now (not deferred to kbench#1) since it silently defeats submit's purpose. `gofmt`/`vet`/`go test ./...` clean.
+- **M2 boundary FIX-THEN-SHIP resolved (before crossing).** Review had zero Critical; the one Important — `kaggle/submit` polling the whole budget on a terminal `error` status instead of fast-failing — is fixed (`pollScore` returns immediately on `StatusError`; `run()` emits a distinct rejected-vs-timeout message). Also folded in the flagged coverage/quality items: zip-slip adversarial test, submit missing-upstream test, `envInt/envDuration` warn-on-malformed, `strings.Contains`. `go test ./...` + `go vet` green.
 - **The integration layer.** `internal/stepio` — the first **Go** step-side reader of the metis step contract (`New()` requires the `METIS_*` env, `ReadWith`/`WriteMetrics`/`UpstreamPath`/`OutPath`), **Decision A2** (contract strings declared locally, provenance → metis `atlas/experiment.md`). `kaggle/download` (auth → `CLI.Download` → **unzip to loose files**, zip-slip-guarded — the download half of an Adapter, the shape kbench's `adapt` consumes) and `kaggle/submit` (submit the upstream `submission.csv` → **bounded async-score poll** via `pollScore(subFn,max,sleep)` with an **injected clock** (ARCH-PURE) → `submission.json` + `metrics.json{public_score}`; timeout → pending record + non-zero exit). Committed `steps/kaggle/*` **go-run wrappers** (mirror metis's committed-wrapper pattern; no build/codegen step). Shared `internal/kaggletest` helpers (ARCH-DRY).
 - **Two simplifications vs the M1-era sketch** (both called out at `sdlc change-code`, plan-quality INFO): **kaggle stays a standalone Go module** (steps read only `with.json` → zero metis imports; the e2e drives the metis *binary* as a subprocess built via `go build -C ../metis`), and step "lowering" is two committed wrappers, not a build system.
 - **Drift-guard resolved (M1-review item) + PROVEN.** `stepio.New()` requires the vars from env (no cwd fallback) and the e2e drives the **real metis binary**; verified empirically that drifting a `METIS_*` const turns the e2e RED (`metis: step "download": exit status 1 … METIS_RUN_DIR_DRIFTED not set`). Not a self-echo.

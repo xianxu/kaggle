@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -67,6 +68,7 @@ func run() error {
 	delay := envDuration("KAGGLE_SUBMIT_DELAY", 5*time.Second)
 	sub, scored, err := pollScore(
 		func() (string, error) { return cli.Submissions(w.Competition.Slug) },
+		filepath.Base(csvPath), // correlate the score to the file WE just uploaded
 		maxAttempts,
 		func(int) { time.Sleep(delay) }, // injected clock (ARCH-PURE): tests pass a no-op
 	)
@@ -89,13 +91,21 @@ func run() error {
 	return ctx.WriteMetrics(map[string]float64{"public_score": *sub.PublicScore})
 }
 
-// pollScore polls submissionsFn up to maxAttempts times, returning the newest
-// scored Submission (scored=true) as soon as one appears. sleep is INJECTED
-// (ARCH-PURE / controllable-time) and called only BETWEEN attempts, so tests drive
-// the loop with zero wall-clock. On exhaustion it returns the newest observed
-// (unscored) submission with scored=false so the caller can persist a pending
-// record; a synthetic pending marker if no rows were ever returned.
-func pollScore(submissionsFn func() (string, error), maxAttempts int, sleep func(attempt int)) (kaggle.Submission, bool, error) {
+// pollScore polls submissionsFn up to maxAttempts times, returning the score of
+// the submission THIS step just uploaded — not "any scored submission". Kaggle
+// lists submissions newest-first, so our upload is subs[0]; keying off the newest
+// row (and, when wantFile is set, requiring its File to match what we uploaded) is
+// what correlates the reported score to OUR file. Using kaggle.LatestScored here
+// would be a bug: a competition with prior scored submissions would report an
+// OLDER submission's score for our still-pending upload. If the newest row isn't
+// ours yet (eventual consistency after submit), we keep polling; on exhaustion we
+// never report someone else's score — we time out (scored=false, safe).
+//
+// sleep is INJECTED (ARCH-PURE / controllable-time) and called only BETWEEN
+// attempts, so tests drive the loop with zero wall-clock. On exhaustion it returns
+// the newest observed OWN submission (unscored) with scored=false so the caller can
+// persist a pending record; a synthetic pending marker if ours never appeared.
+func pollScore(submissionsFn func() (string, error), wantFile string, maxAttempts int, sleep func(attempt int)) (kaggle.Submission, bool, error) {
 	last := kaggle.Submission{Status: kaggle.StatusPending}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		out, err := submissionsFn()
@@ -106,16 +116,19 @@ func pollScore(submissionsFn func() (string, error), maxAttempts int, sleep func
 		if err != nil {
 			return kaggle.Submission{}, false, err
 		}
-		if s, ok := kaggle.LatestScored(subs); ok {
-			return s, true, nil
-		}
-		if len(subs) > 0 {
-			last = subs[0] // newest row, for the debug record on timeout/error
-			// Terminal error: Kaggle rejected the submission (e.g. bad format) — it
-			// will NEVER score, so fast-fail instead of burning the whole poll
-			// budget. The caller distinguishes this from a timeout by Status.
-			if last.Status == kaggle.StatusError {
-				return last, false, nil
+		// subs[0] is the newest = the one we just uploaded (unless it hasn't
+		// registered yet, or a concurrent submit raced in — in both cases keep
+		// polling rather than report a wrong score).
+		if len(subs) > 0 && (wantFile == "" || subs[0].File == wantFile) {
+			newest := subs[0]
+			last = newest // our newest row, for the debug record on timeout/error
+			if newest.Scored() {
+				return newest, true, nil
+			}
+			if newest.Status == kaggle.StatusError {
+				// Terminal: Kaggle rejected our submission — it will NEVER score, so
+				// fast-fail instead of burning the whole budget.
+				return newest, false, nil
 			}
 		}
 		if attempt < maxAttempts {

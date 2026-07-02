@@ -141,8 +141,32 @@ func doSubmissions(args []string, stdout io.Writer) error {
 		sub.Status = kaggle.StatusComplete
 		sub.PublicScore = &score
 	}
-	fmt.Fprint(stdout, kaggle.FormatSubmissionsCSV([]kaggle.Submission{sub}))
+	// Newest-first: our just-submitted row leads. KAGGLE_FAKE_PRIOR_SCORE models a
+	// competition that ALREADY has an older scored submission — the case that
+	// distinguishes "report OUR score" from "report any scored row" (a real bug the
+	// single-submission fake couldn't reach).
+	rows := []kaggle.Submission{sub}
+	if prior, ok := priorScore(); ok {
+		rows = append(rows, kaggle.Submission{
+			File:        "prior.csv",
+			Message:     "prior submission",
+			SubmittedAt: "2026-06-30T00:00:00Z",
+			Status:      kaggle.StatusComplete,
+			PublicScore: &prior,
+		})
+	}
+	fmt.Fprint(stdout, kaggle.FormatSubmissionsCSV(rows))
 	return nil
+}
+
+// priorScore reports a pre-existing older scored submission, if KAGGLE_FAKE_PRIOR_SCORE is set.
+func priorScore() (float64, bool) {
+	if v := os.Getenv("KAGGLE_FAKE_PRIOR_SCORE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
 }
 
 func scoreAfter() int {
