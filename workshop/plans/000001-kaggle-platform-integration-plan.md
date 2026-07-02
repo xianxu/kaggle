@@ -179,17 +179,109 @@ go 1.26.3
 
 ---
 
-## Chunk 2: M2 — the integration (step-types + e2e) — sketch; detailed-plan when reached (re-run `sdlc start-plan`)
+## Chunk 2: M2 — the integration (step-types + e2e) — DETAILED (2026-07-02, post-`start-plan`, digest of the metis contract)
 
-**Goal:** the two step-types run under real `metis run` against the fake, producing a typed `Submission` + public score — the kaggle half of the Titanic thread, hermetic.
+**Goal:** the two step-types run under the **real built `metis` binary** against the fake, producing a typed `Submission` + public score — the kaggle half of the Titanic thread, hermetic.
 
-- **Task 0 — extend go.mod** with the two sibling `replace`s (metis + ariadne, non-transitive; see M1 Task 1 note); `go mod tidy` now pulls metis into the graph. Commit.
-- **Task 1 — `internal/stepio`** (**Decision A2**): Go step-side contract reader — `Context()` (resolve `METIS_STEP_DIR/RUN_DIR/STEP_ID/EXP_DIR/SEED`), `ReadWith(&T)`, `WriteMetrics(map)`, `UpstreamPath(stepID, file)`. Declare the ~5 contract strings locally with a provenance comment → metis atlas `## Surface (M3)`, and a doc-note that drift is caught by the Task-5 e2e. Unit-tested against a temp dir with the env set. *(If the operator chose A1 at approval: instead land `metis/pkg/stepcontract` as its own metis issue first, then import it.)*
-- **Task 2 — `kaggle/download`** (`cmd/kaggle-download` → `steps/kaggle/download`): read `with.competition`, `CLI.Download` into `$METIS_STEP_DIR` → yields a `.zip`; **decide the unzip seam:** recommend the `download` step unzips into `$METIS_STEP_DIR` so downstream/`adapt` sees loose files (record in atlas so kbench's `adapt` knows what shape it consumes). The extracted files are the step artifacts. Test: injected fake (`KAGGLE_FAKE=1`) + temp step dir → expected files present, exit 0.
-- **Task 3 — `kaggle/submit`** (`cmd/kaggle-submit` → `steps/kaggle/submit`): read `with.competition` + `with.submission_file` (upstream artifact via `UpstreamPath`), `CLI.Submit`, then **poll** `CLI.Submissions`+`latestScored` with **bounded retries** (config: max attempts + delay; the fake transitions pending→scored so the loop iterates ≥1 real time). On success write `submission.json` (scored) + `metrics.json{public_score}`. **Pin the timeout contract:** if retries exhaust while still unscored, write `submission.json{status:pending}` (for debugging) and **exit non-zero** — submit's purpose is to return a score, so an unscored run is a failed run (the metis runner records `status:failed`). Tests: (a) injected fake → poll iterates, `submission.json` scored, `metrics.json.public_score` present; (b) `KAGGLE_FAKE_SCORE_AFTER` beyond max-retries → step exits non-zero with a pending `submission.json`.
-- **Task 4 — build + lower** the two `cmd/*` to executable `steps/kaggle/{download,submit}` (a `make`/script target; mirror metis's `steps/metis/*` wrapper pattern — decide: committed built binaries vs a `go run`/build-on-bootstrap wrapper; recommend a small wrapper that `go run`s or a bootstrap build, to keep binaries out of git per metis's `/bin/` gitignore lesson).
-- **Task 5 — e2e:** `testdata/experiment/kaggle-thread.md` running via the built `metis` with `KAGGLE_CLI=<fake>`, `KAGGLE_FAKE=1`, and `METIS_STEP_PATH` including kaggle's `steps/` (**Decision B**). **Fix the data-flow (review C1):** `submit` needs `submission.csv` as an *upstream artifact* under `$METIS_RUN_DIR/<id>/`, but `download` produces competition *data*, not a submission. So the experiment is a 3-step **`download → make-submission → submit`**, where `make-submission` is a tiny stub producer step (in `testdata/steps/test/make-submission`) that writes a fixed `submission.csv` artifact — faithful to the `UpstreamPath` contract (a fixture is NOT an upstream artifact; a prior step must write it). *(In kbench's real thread, kbench's `titanic/submission` step plays the `make-submission` role.)* Assert `run.json` ok, `submission.json` scored, `metrics.json.public_score` present. **This is the issue Done-when** (minus live Kaggle, which the fake faithfully stands in for).
-- **Task 6 — milestone-close M2 + `sdlc close --issue 1`:** atlas `## Surface (M2)` (the step-types + the `KAGGLE_CLI`/fake contract + the async-scoring poll); `sdlc actual`; `--verified`; boundary review; then whole-issue close.
+> **Metis-contract facts driving this detail (from `metis/{cmd/metis/exec.go,main.go,run.go},metis/io.py,atlas/experiment.md`):**
+> 1. **Steps are committed *executable* files, NOT compiled/lowered binaries.** metis's `steps/metis/*` are hand-authored `100755` bash wrappers (`ROOT=$(cd "$(dirname "$0")/../.." && pwd); exec uv run --project "$ROOT" python -m metis.steps.X`). There is **no** Makefile/codegen lowering. → kaggle ships committed `steps/kaggle/{download,submit}` wrappers that `exec go run` the `cmd/*` entrypoint. **Task 4 is no longer a build system — it's two 4-line scripts.**
+> 2. **Step path:** `metis run` searches `$METIS_STEP_PATH` (colon-sep, `filepath.SplitList`) if set, else `<repo-root>/steps`. **No `--step-path` flag.** → the e2e sets `METIS_STEP_PATH` to include kaggle's `steps/` (+ the test's `make-submission` steps dir). (**Decision B** confirmed: env, explicit.)
+> 3. **cwd == step dir; contract is env-driven.** The runner sets `cwd = $METIS_RUN_DIR/<step-id>` AND the 5 `METIS_*` env vars (all absolute). Python `io.step_context()` `_require_env`s all 5. → `stepio.Context()` **requires** the vars it uses (errors if empty), reading paths from **env, not cwd** — this is what makes the drift guard real (§ drift note below).
+> 4. **`run.json`** (`pkg/experiment.Run`) at `<expDir>/runs/<runID>/run.json`: `{id,experiment,seed,started,finished,status,metrics{name:number},artifacts[]}`. `Metrics` is a flat merge of every step's `metrics.json`; `Artifacts` are `<step-id>/<file>` slash-paths (with.json + metrics.json excluded at top level). Non-zero step exit → `status:"failed"`, run halts, ledger still written.
+> 5. **Upstream-artifact convention:** a downstream step names the **upstream step's id** as a `with` value; the *filename* is a convention of the step-type pair (metis: `folds: split` → reads `$METIS_RUN_DIR/split/folds.json`). → kaggle `submit` takes `with.submission: <upstream-id>` and reads `$METIS_RUN_DIR/<id>/submission.csv` (ARCH-DRY: same convention as metis, not a bespoke path scheme).
+
+**Two deviations from the M1-era sketch, both simplifications (call out at `change-code`):**
+- **No cross-repo go.mod changes (drop sketch Task 0).** Under **Decision A2**, `stepio` declares the contract strings locally and kaggle production code imports **zero** metis Go packages (steps read only `with.json`, never the experiment types — confirmed by the digest). The e2e drives the *metis binary* as a **subprocess**, built via `go build -C <sibling metis> ./cmd/metis`, which resolves metis's own `replace ../ariadne` inside the metis module — so **kaggle stays a standalone module**. Adding `require`+`replace` for metis/ariadne (the sketch's Task 0) would be dead go.mod surface that `go mod tidy` fights (can't blank-import a `package main`). *Simplicity-First.*
+- **Task 4 (build/lower) collapses** into writing the two committed `steps/kaggle/*` wrappers (fact 1).
+
+### Task 1 — `internal/stepio` (Go step-side contract reader) — **Decision A2**
+
+**Files:** create `internal/stepio/stepio.go`, `internal/stepio/stepio_test.go`.
+
+- [ ] **Step 1 (red):** `stepio_test.go` — table/subtests against a `t.TempDir()` with the `METIS_*` env set (mirrors metis `test_steps` / `env-dump`):
+  - `Context()` with all vars set → returns the resolved `Context{StepDir,RunDir,StepID}` (+ optional ExpDir/Seed); with **`METIS_STEP_DIR` unset → error** naming the var (the `_require_env` analog — this *is* the drift-guard unit encoding).
+  - `ReadWith(ctx, &T)` unmarshals `$STEP_DIR/with.json` into a struct (write a fixture `with.json`).
+  - `WriteMetrics(ctx, map[string]float64{"public_score":0.8})` writes `$STEP_DIR/metrics.json` as flat JSON the runner's `readMetrics` accepts (assert it round-trips + is `map[string]float64`-shaped).
+  - `UpstreamPath(ctx,"make-submission","submission.csv")` == `filepath.Join(RunDir,"make-submission","submission.csv")`.
+  - `OutPath(ctx,"submission.json")` == `filepath.Join(StepDir,"submission.json")`.
+- [ ] **Step 2:** run → FAIL.
+- [ ] **Step 3 (green):** implement. Declare the contract strings **locally** with a provenance header comment → `metis/atlas/experiment.md` `### Step-executable contract` (the M2/M3 surface) as the authoritative prose, and a doc-note: *"drift is caught by the M2 e2e — it drives the real `metis` binary, which sets these exact `METIS_*` names; a rename there makes `Context()` fail the step and the run."* `Context()` requires `METIS_STEP_DIR`/`METIS_RUN_DIR`/`METIS_STEP_ID` (errors if empty); `ExpDir`/`Seed` read best-effort (kaggle steps don't consume them, so not required — honest coupling to only the surface used). `WriteMetrics` takes `map[string]float64` (the runner unmarshals into exactly that; a non-numeric value would fail its `readMetrics`).
+- [ ] **Step 4:** run → PASS.
+- [ ] **Step 5: Commit** — `#1 M2: internal/stepio — Go step-side metis contract reader (Decision A2, local consts + drift-guard)`.
+
+> **Drift-guard (M1-review item, resolved):** the guard is real because (a) `stepio` reads `METIS_*` from **env** and requires them — never falls back to cwd — and (b) the e2e (Task 5) runs the **actual `metis` binary**, which emits those exact names. If metis renamed e.g. `METIS_RUN_DIR`, `submit.UpstreamPath` would resolve against an empty base / `Context()` would error → the step exits non-zero → `run.json.status:"failed"` → e2e RED. It is NOT `stepio`'s own consts echoed back to itself. The `Context()`-errors-on-missing-var unit test encodes the (a) half; the e2e encodes the (b) half.
+
+### Task 2 — `kaggle/download` step-type
+
+**Files:** create `cmd/kaggle-download/main.go`, `cmd/kaggle-download/main_test.go`.
+
+- **Behavior:** read `with.competition` (a `kaggle.Competition`) via `stepio.ReadWith`; `Validate()`; `kagglecli.New().Download(slug, ctx.StepDir)` → yields `<StepDir>/<slug>.zip` (fake + real CLI both emit a zip); **unzip** the zip into `ctx.StepDir` and **remove the zip**, so the artifacts metis records are the loose data files (`train.csv`/`test.csv`) — the *download half* of an Adapter (kbench's `adapt` consumes loose files; **record this shape in atlas**). No `metrics.json` (download emits no metric).
+- **Unzip seam:** a small `unzip(src, destDir)` helper local to `cmd/kaggle-download` (IO glue; `archive/zip`). YAGNI on sharing until a second unzipper exists.
+- [ ] **Step 1 (red):** `main_test.go` — build `fake-kaggle` into `t.TempDir()`; set `KAGGLE_CLI=<fake>`, `KAGGLE_FAKE=1`, `KAGGLE_FAKE_STATE=<tmp>`, and the `METIS_*` env for a temp step dir; write `with.json` (`{"competition":{"slug":"titanic"}}`); run `main()` (call an extracted `run(env) error`, not `os.Exit`, so it's testable). Assert: `train.csv`+`test.csv` exist in the step dir, **no `*.zip` remains**, exit nil. Missing `competition.slug` → error.
+- [ ] **Step 2:** run → FAIL. **Step 3 (green):** implement (`run()` returns error; `main` maps to `os.Exit(1)` + stderr). **Step 4:** run → PASS.
+- [ ] **Step 5: Commit** — `#1 M2: kaggle/download step-type (auth → CLI download → unzip loose data artifacts)`.
+
+### Task 3 — `kaggle/submit` step-type (async poll)
+
+**Files:** create `cmd/kaggle-submit/main.go`, `cmd/kaggle-submit/main_test.go`.
+
+- **Behavior:** read `with.competition` + `with.submission` (upstream step id); resolve the CSV at `stepio.UpstreamPath(ctx, w.Submission, "submission.csv")`; `CLI.Submit(slug, csv, msg)`; then **poll** `CLI.Submissions(slug)` → `kaggle.ParseSubmissions` → `kaggle.LatestScored` with **bounded retries** (`maxAttempts`, `delay`), the retry loop factored as `pollScore(sub Submissions-fn, max int, sleep func(int)) (kaggle.Submission, bool, error)` with an **injected `sleep`** (ARCH-PURE/controllable-time: tests pass a no-op, `main` passes `time.Sleep(delay)`) so the loop is unit-testable with zero wall-clock. On scored: write `submission.json` (the scored `kaggle.Submission`, `Competition` filled) via `stepio.OutPath` + `WriteMetrics{"public_score": *s.PublicScore}`, exit 0. **Timeout contract:** retries exhausted still-unscored → write `submission.json{status:pending}` (debug aid) and **exit non-zero** (submit's purpose is a score; unscored == failed → runner records `status:"failed"`).
+- **Config:** `maxAttempts` (default e.g. 30) + `delay` (default e.g. 5s) from env (`KAGGLE_SUBMIT_MAX_ATTEMPTS`/`KAGGLE_SUBMIT_DELAY`), so real Kaggle's slow scoring is tunable and the test drives it fast. The fake's `KAGGLE_FAKE_SCORE_AFTER=1` → poll #1 pending, #2 scored, so the loop **provably iterates ≥1**.
+- [ ] **Step 1 (red):** `main_test.go` — (a) fake wired as in Task 2 + an upstream `make-submission`-style dir containing `submission.csv` under `RunDir`; inject `sleep=no-op`; run `run()` → `submission.json` present + `Scored()`, `metrics.json.public_score` present, exit nil, **and assert the poll iterated** (e.g. `KAGGLE_FAKE_SCORE_AFTER=1` needs ≥2 `submissions` calls — assert via the fake's poll counter or a scored result that could only come after a pending). (b) `maxAttempts=1` with `KAGGLE_FAKE_SCORE_AFTER=5` → `run()` returns non-nil error, `submission.json` exists with `status:pending`, no `public_score`.
+- [ ] **Step 2:** run → FAIL. **Step 3 (green):** implement. **Step 4:** run → PASS.
+- [ ] **Step 5: Commit** — `#1 M2: kaggle/submit step-type (submit + bounded async-score poll, injected clock)`.
+
+### Task 4 — committed step wrappers (no build system)
+
+**Files:** create `steps/kaggle/download`, `steps/kaggle/submit` (both `chmod 755`, git-tracked as executable — mirror metis's committed-wrapper pattern, ARCH-DRY on the step-wrapper shape).
+
+```bash
+#!/usr/bin/env bash
+# kaggle/download — step-type wrapper. The runner invokes with cwd == the step dir
+# and the METIS_* env set (absolute). Resolve the kaggle repo root from $0 and hand
+# off to the Go entrypoint; the step reads paths from METIS_* env, not cwd, so
+# `go run -C "$ROOT"` (module root) is correct. See metis/atlas/experiment.md.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+exec go run -C "$ROOT" ./cmd/kaggle-download "$@"
+```
+(submit wrapper identical, `./cmd/kaggle-submit`.) **Verify `.gitignore` doesn't ignore `steps/`** and `git add` preserves mode 755 (`git ls-files -s steps/kaggle` → `100755`). *At implementation, spot-check that `go run -C "$ROOT" ./cmd/... ` under a foreign cwd (the run dir, outside the kaggle module) resolves the module — it does, `-C` chdirs go before module resolution; the program then reads absolute `METIS_*` paths so its cwd is irrelevant.*
+
+- [ ] **Step 1:** write both wrappers, `chmod +x`. **Step 2:** smoke-check one directly: `METIS_STEP_DIR=… METIS_RUN_DIR=… METIS_STEP_ID=… KAGGLE_CLI=<fake> KAGGLE_FAKE=1 KAGGLE_FAKE_STATE=… ./steps/kaggle/download` writes loose data. **Step 3: Commit** — `#1 M2: committed steps/kaggle/{download,submit} go-run wrappers`.
+
+### Task 5 — hermetic e2e under the real `metis` binary (the issue Done-when)
+
+**Files:** create `testdata/experiment/kaggle-thread.md`, `testdata/steps/test/make-submission` (executable stub), `e2e_test.go` (package-level, e.g. `cmd/kaggle-submit/e2e_test.go` or a top-level `e2e/`).
+
+- **Data-flow (review C1):** `submit` needs `submission.csv` as a real **upstream artifact** under `$METIS_RUN_DIR/<id>/`; `download` produces competition *data*, not a submission. So a **3-step** experiment `download → make-submission → submit`, where `make-submission` (a tiny committed bash stub in `testdata/steps/test/make-submission`, reusing metis's `test/echo` shape) writes a fixed `submission.csv` into its step dir. *(In kbench's real thread, kbench's own submission-producing step plays this role — the stub stands in here.)*
+- **Experiment md** (frontmatter per metis `toy-pipeline.md`):
+  ```yaml
+  type: experiment
+  id: kaggle-thread
+  seed: 42
+  status: active
+  steps:
+    - id: download
+      uses: kaggle/download
+      with: {competition: {slug: titanic, metric: accuracy}}
+    - id: make-submission
+      uses: test/make-submission
+      needs: [download]
+    - id: submit
+      uses: kaggle/submit
+      needs: [make-submission]
+      with: {competition: {slug: titanic}, submission: make-submission, message: "e2e"}
+  ```
+- **Harness:** `go build -C <siblingMetis> -o <tmp>/metis ./cmd/metis` (resolve `<siblingMetis>` = `<kaggleRoot>/../metis`; `t.Skip` if absent — like metis's uv-absent skip). Also `go build` the `fake-kaggle`. Copy the experiment md into a temp expDir. `exec.Command(metisBin,"run","--run","run-e2e", <exp>)` with `cmd.Env` = os.Environ + `METIS_STEP_PATH=<kaggleRoot>/steps:<testdataStepsDir>` + `KAGGLE_CLI=<fake>` + `KAGGLE_FAKE=1` + `KAGGLE_FAKE_STATE=<tmp>` + `KAGGLE_FAKE_SCORE_AFTER=1` + `KAGGLE_SUBMIT_MAX_ATTEMPTS=5` + `KAGGLE_SUBMIT_DELAY=0`. Read `<expDir>/runs/run-e2e/run.json`.
+- **Asserts:** `run.Status=="ok"`; `run.Metrics["public_score"]>0`; `submit/submission.json` exists on disk + parses to a `Scored()` `kaggle.Submission`; `download/train.csv` exists (loose, not a zip). **This is the issue Done-when** (minus live Kaggle — the fake faithfully stands in; state that at close, don't claim live-verified).
+- [ ] **Step 1 (red):** write the experiment md + `make-submission` stub + e2e test → run, expect RED (steps not yet found / wired). **Step 2 (green):** iterate to green (this is the integration-debug loop — `go run -C` resolution, step-path, env). **Step 3:** `go test ./...` fully green. **Step 4: Commit** — `#1 M2: hermetic e2e — download→make-submission→submit under real metis run + fake kaggle`.
+
+### Task 6 — atlas + milestone-close M2 + issue close
+
+- [ ] Update `atlas/`: a `## Surface (M2)` covering `internal/stepio` (the metis contract seam + local-consts/Decision-A2 + drift-guard), the two step-types + the **loose-files download shape** (kbench's `adapt` contract) + the **async-scoring poll + timeout** contract, and the `steps/kaggle/*` go-run wrapper convention. Keep `atlas/index.md` linking every file.
+- [ ] `go test ./...` + `go vet ./...` green (paste output into `--verified`).
+- [ ] `sdlc milestone-close --issue 1 --milestone M2` (measured `--actual` via `sdlc actual`; the auto-dispatched boundary review runs here — fix Critical/Important before crossing; log the `Review-Verdict:`).
+- [ ] `sdlc close --issue 1` — `--verified` = e2e output + the explicit *fake-verified, live-deferred* honesty; atlas updated (no `--no-atlas`).
 
 ### Notes for the implementer
 - **ARCH-PURE:** `pkg/kaggle` (records + parsers) is pure + table-tested with zero IO; `kagglecli` + `stepio` + the step `main`s are the only IO. Don't parse CLI text inside exec glue — that's what `parseSubmissions` is for.
@@ -213,3 +305,10 @@ go 1.26.3
 - **Exported names.** The Core-concepts tables/prose above wrote `credentialSource`/`parseSubmissions`/`latestScored` lowercase; the code exports them (`CredentialSource`/`ParseSubmissions`/`LatestScored`, plus `FormatSubmissionsCSV`) because `internal/kagglecli` and `cmd/fake-kaggle` consume them across package boundaries. The design is otherwise as written.
 - **Parser hardened (review Important).** `ParseSubmissions` no longer fails the whole list on one non-numeric `publicScore` cell — an unparseable score degrades that row to unscored (`nil`), so `LatestScored` still finds the newest validly-scored row. Added tests for both error branches (bad-float → row unscored; missing `fileName` column → error). Also dropped `csv.Reader.Comment='#'` from the production parser (it was shaping behavior off the authored fixture) — the test now strips the fixture's provenance header itself, keeping the parser fixture-agnostic.
 - **M2 note from the review:** confirm the e2e actually fails on a renamed `METIS_*` var (reads the real metis-emitted env, not `stepio`'s own consts echoed back) — else Decision A2's "drift caught by the e2e" guard is illusory. Detail this when planning M2.
+
+### 2026-07-02 — M2 detailed (post-`start-plan`; metis-contract digest)
+- **Chunk 2 upgraded sketch → detailed** after re-reading the metis step contract (`cmd/metis/{exec,main,run}.go`, `metis/io.py`, `atlas/experiment.md`). The task-by-task plan now pins the exact `METIS_*` env surface, the `with.json`/`metrics.json` filenames, the `run.json` shape, and the upstream-artifact id-naming convention (kaggle reuses metis's `folds: split` convention as `submission: <upstream-id>` → `submission.csv`, ARCH-DRY).
+- **Deviation 1 — drop sketch Task 0 (cross-repo go.mod).** The digest confirms steps read **only** `with.json`, never metis's experiment types, so under Decision A2 kaggle production code imports **zero** metis packages → **kaggle stays a standalone module**. The e2e drives the metis *binary* as a subprocess built via `go build -C ../metis` (resolves metis's own `../ariadne` replace internally). Adding `require`+`replace` for metis/ariadne would be dead surface `go mod tidy` fights (a `package main` can't be blank-imported to pin it). Net: **no go.mod change in M2.** (Simplicity-First.)
+- **Deviation 2 — Task 4 is not a build system.** metis has no lowering/codegen; its `steps/metis/*` are committed `100755` wrappers. kaggle mirrors this: two committed `steps/kaggle/*` bash wrappers that `exec go run -C "$ROOT" ./cmd/kaggle-<type>` (binaries stay out of git — metis `/bin/` lesson). ARCH-DRY on the wrapper shape.
+- **Drift-guard resolved (M1-review item):** `stepio.Context()` **requires** the `METIS_*` vars from env (never cwd-fallback) — a `Context()`-errors-on-missing-var unit test encodes the local half; the e2e runs the **real `metis` binary** (which emits the exact names) so a rename → step non-zero exit → `run.json.status:"failed"` → e2e RED. Guard is genuine, not a self-echo.
+- **Decision B confirmed:** e2e sets `METIS_STEP_PATH` (colon-sep) to include kaggle's `steps/` + the test's `make-submission` dir (metis exposes no `--step-path` flag; env is the seam).
