@@ -8,27 +8,9 @@ import (
 	"github.com/xianxu/kaggle/internal/kaggletest"
 )
 
-// wireStep sets the METIS_* contract env for a step launched from stepDir/runDir
-// and writes its with.json. Returns the step dir.
-func wireStep(t *testing.T, stepID, withJSON string) (stepDir, runDir string) {
-	t.Helper()
-	stepDir, runDir = t.TempDir(), t.TempDir()
-	t.Setenv("METIS_STEP_DIR", stepDir)
-	t.Setenv("METIS_RUN_DIR", runDir)
-	t.Setenv("METIS_STEP_ID", stepID)
-	if err := os.WriteFile(filepath.Join(stepDir, "with.json"), []byte(withJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return stepDir, runDir
-}
-
 func TestRun_DownloadsAndUnzipsToLooseFiles(t *testing.T) {
-	fake := kaggletest.BuildBin(t, "github.com/xianxu/kaggle/cmd/fake-kaggle", "")
-	t.Setenv("KAGGLE_CLI", fake)
-	t.Setenv("KAGGLE_FAKE", "1")
-	t.Setenv("KAGGLE_FAKE_STATE", t.TempDir())
-
-	stepDir, _ := wireStep(t, "download", `{"competition":{"slug":"titanic"}}`)
+	kaggletest.WireFake(t, t.TempDir())
+	stepDir, _ := kaggletest.WireStep(t, "download", `{"competition":{"slug":"titanic"}}`)
 
 	if err := run(); err != nil {
 		t.Fatalf("run: %v", err)
@@ -47,7 +29,7 @@ func TestRun_DownloadsAndUnzipsToLooseFiles(t *testing.T) {
 
 func TestRun_RejectsMissingSlug(t *testing.T) {
 	// Validate() fails before any CLI call, so no fake needed.
-	wireStep(t, "download", `{"competition":{}}`)
+	kaggletest.WireStep(t, "download", `{"competition":{}}`)
 	if err := run(); err == nil {
 		t.Fatal("run with empty competition slug: want error, got nil")
 	}
