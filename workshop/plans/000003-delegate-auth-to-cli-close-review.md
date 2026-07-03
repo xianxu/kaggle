@@ -52,3 +52,63 @@ None.
 
 **7. Plan revision recommendations**
 None — the Plan is fully `[x]` and matches the shipped code; no `## Revisions` entry needed. (The lessons.md fix above is a separate doc edit, not a plan contradiction.)
+
+---
+
+## Re-review — 2026-07-02T22:22:27-07:00 (SHIP)
+
+| field | value |
+|-------|-------|
+| issue | 3 — kaggle CLI wrapper: delegate auth to the CLI (support access_token + OAuth), drop the stale credential precheck |
+| repo | kaggle |
+| issue file | workshop/issues/000003-delegate-auth-to-cli.md |
+| boundary | whole-issue close |
+| milestone | — |
+| window | d4a1796d84ea88698c6f1de3e625bd914e65e1c8..HEAD |
+| command | sdlc close --issue 3 |
+| reviewer | claude |
+| timestamp | 2026-07-02T22:22:27-07:00 |
+| verdict | SHIP |
+
+## Review
+
+Ignoring 6 permissions.allow entries from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/Users/xianxu/workspace/kaggle"].hasTrustDialogAccepted: true in /Users/xianxu/.claude.json.
+Verification complete. Everything in the window checks out: build/vet/full-suite green, the shadow-sweep confirms zero source refs to the removed symbols, the atlas is fully updated, no README exists in this repo, and the one Important finding from the prior FIX-THEN-SHIP pass (lessons.md doc-drift) has been fixed in b29fee5. The prior Minor (untested `Submissions` error branch) is now covered too.
+
+```verdict
+verdict: SHIP
+confidence: high
+```
+
+This is a clean, root-cause deletion that removes a genuine ARCH-DRY violation — the stale `checkCredentials` mirror of the wrapped CLI's evolving auth rules — and delegates auth entirely to the CLI, whose own error now surfaces through `wrap()`. The purpose is fully delivered: all five bare-`KAGGLE_FAKE=1` sites and the dead `CredentialSource`/`ErrNoCredentials` pair are gone, a real process-level propagation test replaces the deleted precheck, atlas is updated, and `go build/vet/test ./...` are all green. The prior FIX-THEN-SHIP blocker (lessons.md recommending the just-deleted constructs) is resolved, and the refactor also consolidated the duplicated `exec+wrap` path into a single `output()` helper — a net DRY improvement, not just a deletion. Nothing blocks SHIP.
+
+**1. Strengths**
+- **ARCH-DRY delivered at the root** (`internal/kagglecli/cli.go:6-14`): the partial mirror of an external tool's auth that had already drifted once is eliminated at source rather than patched by adding `access_token` support. The rewritten package doc names the four CLI auth methods and the exact failure mode avoided.
+- **DRY improvement in the refactor** (`cli.go:56-70`): the old code had `run` and `Submissions` each doing their own `exec.Command(...).Output()` + `wrap()`. They now share one `output()` seam — this directly resolves the prior review's Minor and shrinks the IO surface.
+- **Missing-cred path stays covered, on both branches** (`cli_test.go:62-84`): `TestCLIError_Propagates` drives a non-zero-exit stub with stderr and asserts the CLI's own actionable message carries through `wrap()` for *both* `Download` (→ `run` → `output`) and `Submissions` (→ `output`) — pins real stderr propagation, not a mock. This is the Done-when's required safety net.
+- **Complete shadow-sweep** (verified by grep): zero source refs to `checkCredentials`/`CredentialSource`/`ErrNoCredentials`/bare `KAGGLE_FAKE`; remaining `KAGGLE_FAKE_*` hits are all legitimate fake-state vars.
+- **Honest verification boundary** (issue Log:90-94, atlas:33/74): the implementor records that green tests prove the precheck is gone and errors propagate but do *not* prove live `access_token` auth — correctly deferred to the operator live-run (kbench#1) since no CLI/creds/network exist here. No easy-subset shortcut claimed as done.
+- **Docs kept in lockstep**: atlas rewrote all three flagged spots and removed the `KAGGLE_FAKE=1` env row; lessons.md annotates the two now-superseded bullets and captures the new ARCH-DRY lesson.
+
+**2. Critical findings**
+None.
+
+**3. Important findings**
+None. (The prior boundary's Important — stale lessons.md guidance — is fixed at `workshop/lessons.md:11-15`.)
+
+**4. Minor findings**
+- None blocking. Optional: `output()`'s success path returns raw stdout and both current callers either discard it or `string()` it — fine as is; no change needed.
+
+**5. Test coverage notes**
+- The deleted `TestCheckCredentials` (which needed `t.Setenv`/temp-HOME — IO in a "pure" test) is correctly replaced by a process-level stub test, keeping the missing-cred contract covered without the IO-in-a-pure-test smell.
+- Both success (`TestCLIInvokesInjectedBinary`) and failure (`TestCLIError_Propagates`) paths through `output()` are exercised, including argv assertions. The prior gap (`Submissions` error branch untested) is closed.
+- Full suite green: `cmd/fake-kaggle`, `kaggle-download`, `kaggle-submit`, `e2e`, `internal/kagglecli` (incl. new test), `internal/stepio`, `pkg/kaggle`.
+
+**6. Architectural notes for upcoming work**
+- **ARCH-DRY — pass (strongly).** This issue *is* an ARCH-DRY correction, and the diff introduces no new duplication — it removes some (`output()` consolidation).
+- **ARCH-PURE — pass.** `internal/kagglecli` remains a thin IO seam that only shells out; no business logic buried in it. Deleting the pure `CredentialSource` is consistent with the principle, not a violation: once the CLI owns auth there is no decision left to keep pure. `pkg/kaggle` stays IO-free.
+- **ARCH-PURPOSE — pass.** Shadow-sweep confirms every consumer of the removed surface derives correctly (all deleted); the one unverifiable claim (live auth) is honestly flagged rather than silently asserted.
+- For the incoming #4 (submission↔run correlation): the `output()` seam is now the single exec point — a good spot if future work needs to capture/correlate CLI invocations.
+
+**7. Plan revision recommendations**
+None — the Plan is fully `[x]` and matches the shipped code; no `## Revisions` entry needed.
