@@ -10,12 +10,11 @@ API/CLI?* → it lives here, not in metis. **Go owns the STATE; the official
 ### `pkg/kaggle` — pure state + parsers (IO-free, table-tested; ARCH-PURE)
 - **`Competition`** (`competition.go`) — thin config `{Slug, Metric, Deadline}` supplied by an experiment's `with`; `Validate()` requires a slug.
 - **`Submission`** (`submission.go`) — one upload's durable record `{Competition, File, Message, SubmittedAt, Status, PublicScore *float64}`, serialized as `submission.json`. `PublicScore` is a pointer because Kaggle scores **asynchronously** (nil until scored). `Scored()` reports non-nil. Status vocab: `pending|complete|error`.
-- **`CredentialSource(username, key string, fileExists bool)`** (`credentials.go`) — the **pure** auth decision (present iff env-pair OR file); `ErrNoCredentials` names both mechanisms. The env-read + `os.Stat` that feed it are IO and live in `kagglecli` — never here.
 - **`ParseSubmissions` / `LatestScored` / `FormatSubmissionsCSV`** (`parse.go`) — the single CLI-text↔typed-state boundary. Header-driven CSV parse (column-by-name, order-independent; `#` comment lines skipped). `LatestScored` returns the newest scored row (Kaggle lists newest-first). Format is the inverse, used by the fake so fake+parser share **one** schema (`submissionsCSVHeader`) — ARCH-DRY.
   - **Deferred (YAGNI):** `Leaderboard` — the public-score purpose is served off `Submission.PublicScore`; a full leaderboard record waits for a `kaggle/leaderboard` step.
 
 ### `internal/kagglecli` — the thin IO seam (ARCH-PURE boundary)
-- **`CLI`** wraps `${KAGGLE_CLI:-kaggle}` (injectable). Methods `Download(slug,dest)`, `Submit(slug,file,msg)`, `Submissions(slug) → raw --csv stdout`. **No parsing** here (that's `pkg/kaggle`). Each real call runs `checkCredentials()` first — **skipped iff `KAGGLE_FAKE=1`** (explicit signal, never a binary-name match).
+- **`CLI`** wraps `${KAGGLE_CLI:-kaggle}` (injectable). Methods `Download(slug,dest)`, `Submit(slug,file,msg)`, `Submissions(slug) → raw --csv stdout`. **No parsing** here (that's `pkg/kaggle`). **Auth is delegated to the wrapped CLI** — it owns its own credentials (OAuth `kaggle auth login`, `KAGGLE_API_TOKEN`, `~/.kaggle/access_token`, or legacy `~/.kaggle/kaggle.json`) and emits its own error on missing creds, which surfaces through `wrap()`. We do **not** pre-check creds: mirroring the CLI's evolving auth rules drifted and false-negatived valid setups (kaggle#3). `ARCH-DRY`.
 
 ### `cmd/fake-kaggle` — process-level fake (the deliverable's fake, not scaffolding)
 A real subprocess speaking `competitions {download, submit, submissions}`:
@@ -27,7 +26,6 @@ A real subprocess speaking `competitions {download, submit, submissions}`:
 | var | meaning |
 |-----|---------|
 | `KAGGLE_CLI` | path to the binary `CLI` shells (`kaggle` by default; the fake in tests) |
-| `KAGGLE_FAKE=1` | skip the credential precheck (fake needs no auth) |
 | `KAGGLE_FAKE_STATE` | dir where the fake keeps per-competition state |
 | `KAGGLE_FAKE_SCORE_AFTER` | polls before the fake reports a score (default 1) |
 | `KAGGLE_FAKE_DATA_DIR` | dir whose top-level files the fake `download` serves byte-for-byte (kaggle#2); unset → the `PassengerId,Survived` stub |

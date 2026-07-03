@@ -1,8 +1,17 @@
 // Package kagglecli is the thin IO seam wrapping the official `kaggle` CLI. It
 // shells an INJECTABLE command (${KAGGLE_CLI:-kaggle}) so a process-level fake can
 // replace it in tests. It does NO parsing — CLI text becomes typed state in
-// pkg/kaggle (ParseSubmissions). ARCH-PURE: this package is the boundary; the
-// auth DECISION is the pure kaggle.CredentialSource, fed by the IO gathered here.
+// pkg/kaggle (ParseSubmissions).
+//
+// Auth is DELEGATED entirely to the wrapped CLI. The CLI is the single source of
+// truth for its own credentials — it accepts OAuth (`kaggle auth login`), the
+// KAGGLE_API_TOKEN env var, ~/.kaggle/access_token (its modern default), or the
+// legacy ~/.kaggle/kaggle.json — and it emits its own clear error when none is
+// present, which surfaces here through wrap(). We deliberately do NOT pre-check
+// credentials: any local mirror of the CLI's auth rules drifts as those rules
+// evolve and false-negatives valid setups (e.g. access_token or an OAuth login,
+// which leaves no file and no env var). ARCH-PURE: this package is the process
+// boundary; ARCH-DRY: the CLI owns auth, we don't restate it.
 package kagglecli
 
 import (
@@ -10,9 +19,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-
-	"github.com/xianxu/kaggle/pkg/kaggle"
 )
 
 // CLI wraps the official kaggle command; bin is ${KAGGLE_CLI:-kaggle}.
@@ -29,47 +35,19 @@ func New() CLI {
 	return CLI{bin: bin}
 }
 
-// checkCredentials gathers the auth IO (env pair + ~/.kaggle/kaggle.json existence)
-// and defers the DECISION to the pure kaggle.CredentialSource. Skipped entirely on
-// an explicit KAGGLE_FAKE=1 signal (never inferred from the binary name, which
-// would wrongly skip a real CLI installed at a full path like .venv/bin/kaggle).
-// Existence-only for the file — the secret value is never read.
-func checkCredentials() error {
-	if os.Getenv("KAGGLE_FAKE") == "1" {
-		return nil
-	}
-	fileExists := false
-	if home, err := os.UserHomeDir(); err == nil {
-		if _, err := os.Stat(filepath.Join(home, ".kaggle", "kaggle.json")); err == nil {
-			fileExists = true
-		}
-	}
-	_, err := kaggle.CredentialSource(os.Getenv("KAGGLE_USERNAME"), os.Getenv("KAGGLE_KEY"), fileExists)
-	return err
-}
-
 // Download pulls the competition's data into dest (a .zip, from the real CLI).
 func (c CLI) Download(slug, dest string) error {
-	if err := checkCredentials(); err != nil {
-		return err
-	}
 	return c.run("competitions", "download", "-c", slug, "-p", dest)
 }
 
 // Submit uploads file as a submission to the competition, with a message.
 func (c CLI) Submit(slug, file, msg string) error {
-	if err := checkCredentials(); err != nil {
-		return err
-	}
 	return c.run("competitions", "submit", "-c", slug, "-f", file, "-m", msg)
 }
 
 // Submissions returns the raw `--csv` stdout listing the competition's submissions.
 // Parse it with pkg/kaggle.ParseSubmissions (no parsing happens in this layer).
 func (c CLI) Submissions(slug string) (string, error) {
-	if err := checkCredentials(); err != nil {
-		return "", err
-	}
 	out, err := exec.Command(c.bin, "competitions", "submissions", "-c", slug, "--csv").Output()
 	if err != nil {
 		return "", wrap(c.bin, err)
