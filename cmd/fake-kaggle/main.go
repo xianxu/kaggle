@@ -74,16 +74,53 @@ func doDownload(args []string, stdout io.Writer) error {
 	if err := os.MkdirAll(*dest, 0o755); err != nil {
 		return err
 	}
+	files, err := downloadFiles(os.Getenv("KAGGLE_FAKE_DATA_DIR"))
+	if err != nil {
+		return err
+	}
 	// Real `kaggle competitions download` yields a .zip — mirror that shape.
 	zpath := filepath.Join(*dest, *slug+".zip")
-	if err := writeZip(zpath, map[string]string{
-		"train.csv": "PassengerId,Survived\n1,0\n2,1\n",
-		"test.csv":  "PassengerId\n3\n4\n",
-	}); err != nil {
+	if err := writeZip(zpath, files); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "Downloading %s.zip to %s\n", *slug, *dest)
 	return nil
+}
+
+// downloadFiles returns the files to pack into the download zip. When dir is
+// non-empty (KAGGLE_FAKE_DATA_DIR), it serves every top-level regular file in
+// that dir byte-for-byte — competition-agnostic, so a consumer points it at a
+// committed fixture carrying the REAL column shapes for a full-thread e2e.
+// Subdirectories are skipped (fixtures are flat). A dir that is missing or holds
+// no regular files is an error, not a silent empty zip. When dir is "" (env
+// unset or empty), it falls back to the minimal PassengerId,Survived stub —
+// enough for the kaggle layer's own download→unzip e2e (back-compat).
+func downloadFiles(dir string) (map[string]string, error) {
+	if dir == "" {
+		return map[string]string{
+			"train.csv": "PassengerId,Survived\n1,0\n2,1\n",
+			"test.csv":  "PassengerId\n3\n4\n",
+		}, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("KAGGLE_FAKE_DATA_DIR %q: %w", dir, err)
+	}
+	files := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue // flat fixtures — top-level files only
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		files[e.Name()] = string(b)
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("KAGGLE_FAKE_DATA_DIR %q has no regular files", dir)
+	}
+	return files, nil
 }
 
 func doSubmit(args []string, stdout io.Writer) error {

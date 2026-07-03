@@ -1,12 +1,13 @@
 ---
 id: 000002
-status: working
+status: codecomplete
 deps: []
 github_issue:
 created: 2026-07-02
 updated: 2026-07-02
 estimate_hours: 0.58
 started: 2026-07-02T17:37:24-07:00
+actual_hours: 0.13
 ---
 
 # fake-kaggle: fixture-driven download (serve real competition columns for full-thread e2e)
@@ -31,9 +32,9 @@ Make the fake's `download` **fixture-driven and competition-agnostic**: when `KA
 
 ## Plan
 
-- [ ] Add `downloadFiles()` — returns the zip contents: `KAGGLE_FAKE_DATA_DIR` files (competition-agnostic) if set, else the current stub; error on missing/empty dir. `doDownload` calls it. TDD: table test both branches (fixture dir → contents match; unset → stub) + the empty/missing-dir error.
-- [ ] Update `atlas/` — note the `KAGGLE_FAKE_DATA_DIR` seam on the fake's surface sketch.
-- [ ] `sdlc close --issue 2` (single atomic boundary — no milestones).
+- [x] Add `downloadFiles()` — returns the zip contents: `KAGGLE_FAKE_DATA_DIR` files (competition-agnostic) if set, else the current stub; error on missing/empty dir. `doDownload` calls it. TDD: table test both branches (fixture dir → contents match; unset → stub) + the empty/missing-dir error.
+- [x] Update `atlas/` — note the `KAGGLE_FAKE_DATA_DIR` seam on the fake's surface sketch.
+- [x] `sdlc close --issue 2` (single atomic boundary — no milestones).
 
 ## Estimate
 
@@ -52,5 +53,8 @@ total: 0.58
 ## Log
 
 ### 2026-07-02
+- 2026-07-02: closed — fixture-driven fake download: KAGGLE_FAKE_DATA_DIR serves competition files byte-for-byte (top-level; subdirs skipped), unset → PassengerId,Survived stub (back-compat), set-but-missing/empty → error not silent empty zip. go test ./... green (8 fake tests incl 5 new; existing stub-reliant e2e passes) + go vet clean.; review verdict: SHIP
 
 Created as the D1 vehicle for kbench#1 M2's hermetic full-thread e2e (see kbench#1 plan, Open decision D1). The operator chose the mocked/fake path over the metis-portion-only fallback. Kept in the kaggle layer (not kbench#1's number) per layer discipline — the fake is kaggle-owned, and a fixture-driven download is reusable for every future competition e2e, not just Titanic.
+
+**Implemented (TDD).** Added `downloadFiles(dir string) (map[string]string, error)` in `cmd/fake-kaggle/main.go`; `doDownload` reads `os.Getenv("KAGGLE_FAKE_DATA_DIR")` at the boundary (ARCH-PURE nicety the change-code plan-judge suggested) and passes it in. When set: serve every top-level regular file byte-for-byte (subdirs skipped — flat fixtures); missing/empty dir → error. When "" (unset): the existing `PassengerId,Survived` stub (back-compat). Honored the plan-judge's three test-pinning points: (1) `KAGGLE_FAKE_DATA_DIR=""` == unset → stub (tri-state pinned so it can't flip to error and break the existing e2e); (2) a subdir in the fixture is skipped, not an error; (3) assert unzipped **bytes** equal the fixture (not just entry names), and keep pinning the stub content. **Evidence:** `go test ./...` green (8 fake tests incl. 5 new; the existing kaggle e2e that relies on the stub still passes) + `go vet ./...` clean.

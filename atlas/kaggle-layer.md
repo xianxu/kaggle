@@ -19,7 +19,7 @@ API/CLI?* → it lives here, not in metis. **Go owns the STATE; the official
 
 ### `cmd/fake-kaggle` — process-level fake (the deliverable's fake, not scaffolding)
 A real subprocess speaking `competitions {download, submit, submissions}`:
-- `download` writes a real-shaped **`.zip`** into `-p`.
+- `download` writes a real-shaped **`.zip`** into `-p`. **Fixture-driven** (kaggle#2): if `KAGGLE_FAKE_DATA_DIR` is set, the zip carries every top-level file in that dir byte-for-byte (competition-agnostic — real column shapes for a full-thread e2e); unset → a minimal `PassengerId,Survived` stub (back-compat). A set-but-missing/empty dir errors (never a silent empty zip).
 - `submit` records state; `submissions` models the async **transition** — `pending` for the first `KAGGLE_FAKE_SCORE_AFTER` (default 1) polls, then `complete`+scored — so a consumer's poll loop iterates.
 - Output via `kaggle.FormatSubmissionsCSV` (shared schema).
 
@@ -30,6 +30,7 @@ A real subprocess speaking `competitions {download, submit, submissions}`:
 | `KAGGLE_FAKE=1` | skip the credential precheck (fake needs no auth) |
 | `KAGGLE_FAKE_STATE` | dir where the fake keeps per-competition state |
 | `KAGGLE_FAKE_SCORE_AFTER` | polls before the fake reports a score (default 1) |
+| `KAGGLE_FAKE_DATA_DIR` | dir whose top-level files the fake `download` serves byte-for-byte (kaggle#2); unset → the `PassengerId,Survived` stub |
 
 **Honesty caveat:** this repo has no `kaggle` CLI and no credentials, so the fake+e2e is the *verified* path; the live-Kaggle path is code-complete but **not live-verified**. `pkg/kaggle/testdata/submissions.csv` is an **authored** fixture (Kaggle-CLI-docs provenance) — its columns/status vocab must be validated against the first live capture; fake and parser co-derive from it, so it is the one unverified schema point.
 
