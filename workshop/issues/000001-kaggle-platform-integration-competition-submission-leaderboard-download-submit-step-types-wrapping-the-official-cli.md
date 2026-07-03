@@ -1,12 +1,13 @@
 ---
 id: 000001
-status: working
+status: done
 deps: [metis#1]
 github_issue:
 created: 2026-07-01
-updated: 2026-07-01
-estimate_hours:
+updated: 2026-07-02
+estimate_hours: 3.5
 started: 2026-07-01T22:27:10-07:00
+actual_hours: N/A
 ---
 
 # kaggle platform integration: Competition/Submission/Leaderboard + download/submit step-types wrapping the official CLI
@@ -32,10 +33,54 @@ Design from the 2026-07-01 brainstorm. **Scope Go to the STATE, ride the officia
 
 ## Plan
 
-- [ ] M1 — Competition/Submission/Leaderboard + credentials; `kaggle/download` + `kaggle/submit` step-types wrapping the official CLI; process-level fake + e2e
+- [x] M1 — kaggle library: `Competition`/`Submission` records + pure CLI-output parsers (`parseSubmissions`/`latestScored`) + pure `credentialSource`; `internal/kagglecli` injectable `${KAGGLE_CLI}` client; process-level fake `kaggle` (zip download + async pending→scored submit); client-vs-fake integration test
+- [x] M2 — integration: Go step-side contract reader (`internal/stepio`); `kaggle/download` + `kaggle/submit` step-types over the metis contract; e2e (`download → make-submission → submit`) under `metis run` against the fake; atlas + whole-issue close
+
+Durable plan (per-file/per-test detail, Core concepts, open decisions): [`workshop/plans/000001-kaggle-platform-integration-plan.md`](../plans/000001-kaggle-platform-integration-plan.md). M1 detailed; M2 sketched (re-run `sdlc start-plan` before detailing it).
+
+## Estimate
+
+```estimate
+model: estimate-logic-v3.1
+familiarity: 1.0
+item: greenfield-go-module   design=0.4 impl=0.4
+item: api-integration        design=0.4 impl=0.6
+item: real-api-discovery     design=0.2 impl=0.2
+item: smaller-go-module      design=0.3 impl=0.4
+item: milestone-review       design=0.0 impl=0.2
+item: milestone-review       design=0.0 impl=0.2
+design-buffer: 0.15
+total: 3.5
+```
+
+Derivation (AI-paired ship-wall-clock, v3.1): **M1** = `greenfield-go-module` (pure `pkg/kaggle` records + parsers) + `api-integration` (the `kagglecli` CLI wrapper + process-level fake + async poll/retry) + `real-api-discovery` (budget to match the Kaggle CLI's `download`/`submit`/`submissions` surface + CSV shape from docs — live access deferred, so a small discovery cost, not a full one). **M2** = `smaller-go-module` (the two step-types + `internal/stepio`, extending the established metis step contract). Plus two `milestone-review` boundaries (M1, M2). recomputed = Σdesign(1.3)×1.15 + Σimpl(2.0) = 3.495 ≈ **3.5**. Provisional — calibration source flagged stale; sanity-checked against metis#1 (est 6 / actual 3.83, similar Go+fake+wiring surface).
 
 ## Log
 
+### 2026-07-02 — M2 shipped (step-types + integration; pending boundary review + close)
+- 2026-07-02: closed — Issue Done-when met: kaggle/download + kaggle/submit run under REAL metis run (e2e TestKaggleThread_EndToEnd PASS) — auth+pull Titanic data as loose files, submit + bounded async-score poll → typed SCORED Submission + public_score; process-level fake backs CI (no live Kaggle). go test ./... + go vet green; M2 boundary review FIX-THEN-SHIP→fixed. Done-when #3 (kbench live thread) is the separable downstream consumer (kbench#1). Live-Kaggle code-complete, NOT live-verified (no CLI/creds); one unverified point = authored submissions.csv schema. actual N/A: whole-issue 6.43h measure carries M1 21% interleaving contamination (M1 already excluded its 5.23h) + M2 bg-job telemetry under-count — N/A protects calibration per M1.; review verdict: FIX-THEN-SHIP
+- 2026-07-02: closed M2 — go test ./... green incl e2e TestKaggleThread_EndToEnd PASS: download→make-submission→submit under REAL metis run → run.json ok, public_score>0, scored submission.json, loose (non-zip) download data. Drift-guard PROVEN (drifted METIS_* const → e2e RED). go vet clean. Fake-verified; live-Kaggle code-complete not live-verified. actual N/A: bg-job telemetry under-count (0.27h M2-window); whole-issue 6.43h M1-contaminated, not M2-scoped.; review verdict: FIX-THEN-SHIP
+- **Close-review Critical FIXED (whole-issue boundary).** The end-of-issue integration review caught a correctness bug both milestone reviews missed: `kaggle/submit` picked its score via `LatestScored` (any scored row), uncorrelated to the file uploaded — on a live competition with prior scored submissions it would report an OLDER submission's score. Fixed: `pollScore` now keys off the newest (just-uploaded) row, filename-correlated; `LatestScored` demoted to a "best-score" query. Upgraded the fake (`KAGGLE_FAKE_PRIOR_SCORE`) + added pure + e2e regressions (both fail under the old logic). Fixed now (not deferred to kbench#1) since it silently defeats submit's purpose. `gofmt`/`vet`/`go test ./...` clean.
+- **M2 boundary FIX-THEN-SHIP resolved (before crossing).** Review had zero Critical; the one Important — `kaggle/submit` polling the whole budget on a terminal `error` status instead of fast-failing — is fixed (`pollScore` returns immediately on `StatusError`; `run()` emits a distinct rejected-vs-timeout message). Also folded in the flagged coverage/quality items: zip-slip adversarial test, submit missing-upstream test, `envInt/envDuration` warn-on-malformed, `strings.Contains`. `go test ./...` + `go vet` green.
+- **The integration layer.** `internal/stepio` — the first **Go** step-side reader of the metis step contract (`New()` requires the `METIS_*` env, `ReadWith`/`WriteMetrics`/`UpstreamPath`/`OutPath`), **Decision A2** (contract strings declared locally, provenance → metis `atlas/experiment.md`). `kaggle/download` (auth → `CLI.Download` → **unzip to loose files**, zip-slip-guarded — the download half of an Adapter, the shape kbench's `adapt` consumes) and `kaggle/submit` (submit the upstream `submission.csv` → **bounded async-score poll** via `pollScore(subFn,max,sleep)` with an **injected clock** (ARCH-PURE) → `submission.json` + `metrics.json{public_score}`; timeout → pending record + non-zero exit). Committed `steps/kaggle/*` **go-run wrappers** (mirror metis's committed-wrapper pattern; no build/codegen step). Shared `internal/kaggletest` helpers (ARCH-DRY).
+- **Two simplifications vs the M1-era sketch** (both called out at `sdlc change-code`, plan-quality INFO): **kaggle stays a standalone Go module** (steps read only `with.json` → zero metis imports; the e2e drives the metis *binary* as a subprocess built via `go build -C ../metis`), and step "lowering" is two committed wrappers, not a build system.
+- **Drift-guard resolved (M1-review item) + PROVEN.** `stepio.New()` requires the vars from env (no cwd fallback) and the e2e drives the **real metis binary**; verified empirically that drifting a `METIS_*` const turns the e2e RED (`metis: step "download": exit status 1 … METIS_RUN_DIR_DRIFTED not set`). Not a self-echo.
+- **Verified:** `go vet ./...` clean; `go test ./...` green incl. the e2e `TestKaggleThread_EndToEnd` (PASS, 1.95s) — `download → make-submission → submit` under real `metis run`, asserting `run.json` ok + `public_score>0` + a scored `submission.json` + loose (non-zip) download data. The e2e `t.Skip`s if sibling metis is absent, so the close evidence cites the actual PASS line.
+- **Honesty (carries M1's):** fake + green e2e is the verified path; the **live-Kaggle path is code-complete but NOT live-verified** (no CLI/creds here). The one unverified point gating live is the **authored `testdata/submissions.csv` schema** — fake+parser+submit+e2e co-derive from it, so a wrong column passes the hermetic e2e and only surfaces on the first live capture (operator / kbench#1).
+
 ### 2026-07-01
+- 2026-07-01: closed M1 — go test ./... + go vet green (pkg/kaggle, internal/kagglecli, cmd/fake-kaggle); TestClientAgainstFake proves submit→poll→scored iterates through pending (scored poll #2). CredentialSource IO-free, fixture authored-not-captured, fake models async transition — all re-verified in main. actual N/A: measured 5.23h is session-contaminated (metis+kaggle interleaved, active-time double-counts); flagged to protect calibration.; review verdict: FIX-THEN-SHIP
 
 Created from the `kaggle-ml-base-layer` project brainstorm (brain `data/project/kaggle-ml-base-layer.md`). Depends on metis#1 (the step-runner + step-type contract + Dataset envelope). Layer: `kbench → kaggle → metis → ariadne`.
+
+Claimed + planned (durable plan written, fresh-eyes reviewed). Design: **Go owns STATE, official CLI owns TRANSPORT**; pure `pkg/kaggle` (records + parsers), thin injectable `internal/kagglecli`, Go step-types honoring the metis contract, process-level fake for a hermetic e2e. Contract-fidelity check against `metis/cmd/metis/exec.go` came back clean.
+
+**M1 shipped (pending boundary review + close).** The kaggle library: a **pure** `pkg/kaggle` (`ARCH-PURE`, table-tested, zero IO) — `Competition`/`Submission` records + the single CLI-text↔state boundary `ParseSubmissions`/`LatestScored`/`FormatSubmissionsCSV` (header-driven, order-independent) + the pure `CredentialSource` decision. A **thin IO seam** `internal/kagglecli` shelling an injectable `${KAGGLE_CLI:-kaggle}` (no parsing; auth decision deferred to the pure fn; precheck skipped only on explicit `KAGGLE_FAKE=1`, not a binary-name match). A **process-level fake** `cmd/fake-kaggle` that emits a real-shaped `.zip` on download and models the **async scoring transition** (`pending` for the first `KAGGLE_FAKE_SCORE_AFTER` polls, then `complete`+scored). `FormatSubmissionsCSV` gives fake+parser **one** schema (`ARCH-DRY`) — with the honest residual gap that neither is validated against real Kaggle (the fixture is *authored*, not captured; validate on first live run). Verification: `go test ./...` green; the `TestClientAgainstFake` integration test proves the submit→poll→scored flow **iterates through pending** (scored on poll #2). `Leaderboard` deferred (YAGNI). Delegated to a full-context implementation fork.
+
+## Revisions
+
+### 2026-07-01 — plan split M1→M1/M2 + review-driven design fixes
+- **Split the single M1 into two review boundaries** (M1 = the kaggle library; M2 = the step-types + e2e integration) — two genuinely separate close points, matching the SDLC milestone convention.
+- **`Leaderboard` deferred (YAGNI):** the walking skeleton reads the public score off `Submission.PublicScore` (via `parseSubmissions`); nothing consumes a full leaderboard snapshot, so building the struct now is a Simplicity-First smell. The Spec's leaderboard-*score* purpose is met. Deferred until a `kaggle/leaderboard` pull step needs it.
+- **Fidelity caveat (honesty, not a claim):** this machine has no `kaggle` CLI and no credentials, so the *verified* deliverable is feature + faithful process-level fake with a green e2e; the **live-Kaggle path is code-complete but NOT live-verified** until run with credentials (operator, or kbench#1). The `submissions --csv` fixture is *authored* (Kaggle-CLI-docs provenance), not captured — validate its columns/status vocabulary on the first live run.
+- Plan-review fixes folded in: `credentialSource` made pure (env/stat IO pushed to `kagglecli`); the fake models the async pending→scored *transition* (so the submit poll loop actually iterates) + emits a real-shaped `.zip`; e2e data-flow corrected (a `make-submission` producer step writes the `submission.csv` upstream artifact — a fixture is not an `UpstreamPath` artifact); submit poll-timeout contract pinned (exit non-zero on exhaustion). Step-contract constants: **Decision A2** (kaggle-local now, promote to `metis/pkg/stepcontract` when kbench is the 3rd Go consumer).

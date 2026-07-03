@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# kaggle/submit — step-type wrapper. See steps/kaggle/download for the contract
+# note: cwd == step dir, METIS_* env set (absolute); resolve the repo root from $0
+# and `go run -C "$ROOT"` the Go entrypoint, which reads all paths from METIS_* env.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+exec go run -C "$ROOT" ./cmd/kaggle-submit "$@"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# test/make-submission — stub producer for kaggle#1 M2's e2e. Writes a fixed
+# submission.csv artifact so kaggle/submit has a real UPSTREAM artifact to read (a
+# fixture is not an upstream artifact — a prior step must produce it). In kbench's
+# real Titanic thread, kbench's own submission-producing step plays this role.
+set -euo pipefail
+d="${METIS_STEP_DIR:?METIS_STEP_DIR not set — a step must be launched by metis run}"
+printf 'PassengerId,Survived\n892,0\n893,1\n' > "$d/submission.csv"

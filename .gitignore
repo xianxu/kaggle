@@ -7,3 +7,4 @@
 /.colima/
 /construct/scripts/vm-log.sh
 /construct/generated/
+/bin/
