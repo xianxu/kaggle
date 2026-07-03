@@ -53,7 +53,6 @@ func TestKaggleThread_EndToEnd(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"METIS_STEP_PATH="+stepPath,
 		"KAGGLE_CLI="+fake,
-		"KAGGLE_FAKE=1",
 		"KAGGLE_FAKE_STATE="+t.TempDir(),
 		"KAGGLE_FAKE_SCORE_AFTER=1", // forces submit's poll to iterate (pending → scored)
 		"KAGGLE_SUBMIT_MAX_ATTEMPTS=5",

@@ -1,13 +1,10 @@
 package kagglecli
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/xianxu/kaggle/pkg/kaggle"
 )
 
 // writeStub writes an executable shell stub that appends its argv to $STUB_ARGS
@@ -28,7 +25,6 @@ func TestCLIInvokesInjectedBinary(t *testing.T) {
 	argsFile := filepath.Join(dir, "args.log")
 	stub := writeStub(t, dir, "csvout")
 	t.Setenv("KAGGLE_CLI", stub)
-	t.Setenv("KAGGLE_FAKE", "1") // skip the credential precheck for the stub
 	t.Setenv("STUB_ARGS", argsFile)
 
 	c := New()
@@ -58,41 +54,31 @@ func TestCLIInvokesInjectedBinary(t *testing.T) {
 	}
 }
 
-// checkCredentials is where the auth IO (env read + kaggle.json stat) happens and
-// feeds the pure kaggle.CredentialSource. Exercised here (not in pkg/kaggle).
-func TestCheckCredentials(t *testing.T) {
-	// KAGGLE_FAKE=1 → skip the precheck entirely (fake needs no auth).
-	t.Setenv("KAGGLE_FAKE", "1")
-	if err := checkCredentials(); err != nil {
-		t.Fatalf("KAGGLE_FAKE=1 should skip precheck, got %v", err)
-	}
-
-	// Real path, env pair present → ok (temp HOME has no kaggle.json).
-	t.Setenv("KAGGLE_FAKE", "")
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("KAGGLE_USERNAME", "u")
-	t.Setenv("KAGGLE_KEY", "k")
-	if err := checkCredentials(); err != nil {
-		t.Fatalf("env pair present: want nil, got %v", err)
-	}
-
-	// Real path, nothing present → ErrNoCredentials.
-	t.Setenv("KAGGLE_USERNAME", "")
-	t.Setenv("KAGGLE_KEY", "")
-	if err := checkCredentials(); !errors.Is(err, kaggle.ErrNoCredentials) {
-		t.Fatalf("no creds: want ErrNoCredentials, got %v", err)
-	}
-
-	// Real path, kaggle.json present (env empty) → ok.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".kaggle"), 0o755); err != nil {
+// TestCLIError_Propagates is the safety net that replaces the deleted credential
+// precheck: we no longer validate creds ourselves, so a creds-less run must fail
+// via the CLI's OWN error surfacing through the wrapper. The stub mimics the real
+// CLI refusing on missing credentials (stderr + non-zero exit); wrap() must carry
+// that stderr out so the operator sees the actionable message.
+func TestCLIError_Propagates(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "failing-cli")
+	script := "#!/bin/sh\necho 'no Kaggle API credentials found; run: kaggle auth login' >&2\nexit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".kaggle", "kaggle.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
+	t.Setenv("KAGGLE_CLI", stub)
+
+	c := New()
+	// Both paths (run → output, and Submissions → output) must surface the
+	// CLI's stderr — cover each so neither error branch silently swallows it.
+	if err := c.Download("titanic", t.TempDir()); err == nil {
+		t.Error("Download against a failing CLI: want error, got nil")
+	} else if !strings.Contains(err.Error(), "no Kaggle API credentials found") {
+		t.Errorf("Download: wrapped error must carry the CLI's stderr; got: %v", err)
 	}
-	if err := checkCredentials(); err != nil {
-		t.Fatalf("kaggle.json present: want nil, got %v", err)
+	if _, err := c.Submissions("titanic"); err == nil {
+		t.Error("Submissions against a failing CLI: want error, got nil")
+	} else if !strings.Contains(err.Error(), "no Kaggle API credentials found") {
+		t.Errorf("Submissions: wrapped error must carry the CLI's stderr; got: %v", err)
 	}
 }

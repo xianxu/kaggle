@@ -48,12 +48,12 @@ func WireStep(t *testing.T, stepID, withJSON string) (stepDir, runDir string) {
 }
 
 // WireFake builds the process-level fake, points KAGGLE_CLI at it, and sets the
-// no-auth + state env. Returns the fake's path.
+// fake's state env. Returns the fake's path. (No auth env needed — the wrapper
+// delegates auth to the CLI, and the fake ignores it.)
 func WireFake(t *testing.T, stateDir string) string {
 	t.Helper()
 	fake := BuildBin(t, "github.com/xianxu/kaggle/cmd/fake-kaggle", "")
 	t.Setenv("KAGGLE_CLI", fake)
-	t.Setenv("KAGGLE_FAKE", "1")
 	t.Setenv("KAGGLE_FAKE_STATE", stateDir)
 	return fake
 }

@@ -20,7 +20,6 @@ func buildFake(t *testing.T) string {
 func TestClientAgainstFake(t *testing.T) {
 	fake := buildFake(t)
 	t.Setenv("KAGGLE_CLI", fake)
-	t.Setenv("KAGGLE_FAKE", "1")
 	t.Setenv("KAGGLE_FAKE_STATE", t.TempDir())
 	t.Setenv("KAGGLE_FAKE_SCORE_AFTER", "1") // poll #1 pending, poll #2 scored
 
