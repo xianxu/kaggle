@@ -1,12 +1,13 @@
 ---
 id: 000002
-status: working
+status: codecomplete
 deps: []
 github_issue:
 created: 2026-07-02
 updated: 2026-07-02
 estimate_hours: 0.58
 started: 2026-07-02T17:37:24-07:00
+actual_hours: 0.13
 ---
 
 # fake-kaggle: fixture-driven download (serve real competition columns for full-thread e2e)
@@ -52,6 +53,7 @@ total: 0.58
 ## Log
 
 ### 2026-07-02
+- 2026-07-02: closed — fixture-driven fake download: KAGGLE_FAKE_DATA_DIR serves competition files byte-for-byte (top-level; subdirs skipped), unset → PassengerId,Survived stub (back-compat), set-but-missing/empty → error not silent empty zip. go test ./... green (8 fake tests incl 5 new; existing stub-reliant e2e passes) + go vet clean.; review verdict: SHIP
 
 Created as the D1 vehicle for kbench#1 M2's hermetic full-thread e2e (see kbench#1 plan, Open decision D1). The operator chose the mocked/fake path over the metis-portion-only fallback. Kept in the kaggle layer (not kbench#1's number) per layer discipline — the fake is kaggle-owned, and a fixture-driven download is reusable for every future competition e2e, not just Titanic.
 
