@@ -48,18 +48,25 @@ func (c CLI) Submit(slug, file, msg string) error {
 // Submissions returns the raw `--csv` stdout listing the competition's submissions.
 // Parse it with pkg/kaggle.ParseSubmissions (no parsing happens in this layer).
 func (c CLI) Submissions(slug string) (string, error) {
-	out, err := exec.Command(c.bin, "competitions", "submissions", "-c", slug, "--csv").Output()
-	if err != nil {
-		return "", wrap(c.bin, err)
-	}
-	return string(out), nil
+	out, err := c.output("competitions", "submissions", "-c", slug, "--csv")
+	return string(out), err
 }
 
+// run execs the CLI discarding stdout; a non-zero exit surfaces as a wrapped error.
 func (c CLI) run(args ...string) error {
-	if _, err := exec.Command(c.bin, args...).Output(); err != nil {
-		return wrap(c.bin, err)
+	_, err := c.output(args...)
+	return err
+}
+
+// output execs the CLI and returns its stdout; on failure it wraps the error,
+// carrying the CLI's own stderr (e.g. its auth-failure message) out to the caller.
+// The single exec+wrap path shared by run and Submissions.
+func (c CLI) output(args ...string) ([]byte, error) {
+	out, err := exec.Command(c.bin, args...).Output()
+	if err != nil {
+		return nil, wrap(c.bin, err)
 	}
-	return nil
+	return out, nil
 }
 
 func wrap(bin string, err error) error {

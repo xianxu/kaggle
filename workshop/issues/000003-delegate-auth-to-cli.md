@@ -1,12 +1,13 @@
 ---
 id: 000003
-status: working
+status: codecomplete
 deps: []
 github_issue:
 created: 2026-07-02
 updated: 2026-07-02
 estimate_hours: 0.52
 started: 2026-07-02T20:22:04-07:00
+actual_hours: 0.17
 ---
 
 # kaggle CLI wrapper: delegate auth to the CLI (support access_token + OAuth), drop the stale credential precheck
@@ -86,6 +87,7 @@ edit. Design is ~nil (diagnosis done in the claim window; single obvious approac
 ## Log
 
 ### 2026-07-02
+- 2026-07-02: closed — go vet ./... clean; go test ./... all packages OK — fake-kaggle, kaggle-download, kaggle-submit, e2e, internal/kagglecli (incl. new TestCLIError_Propagates pinning that a CLI auth failure surfaces through the wrapper), pkg/kaggle. Grep confirms zero refs to removed checkCredentials/CredentialSource/ErrNoCredentials. Fake+e2e path verified. HONEST GAP (verify-before-claim): real ~/.kaggle/access_token auth against live Kaggle is NOT proven here — no CLI/creds/network in this env; that proof is the operator live-run (kbench#1), now unblocked since the download step go-runs this working tree. atlas/kaggle-layer.md updated (auth delegated to CLI).; review verdict: FIX-THEN-SHIP
 - Diagnosed from the live-run failure: our precheck only knew legacy creds; new CLI 2.2.3 uses `~/.kaggle/access_token`. Chose delegate-to-CLI (remove) over broaden (add access_token) because broaden still false-negatives OAuth and keeps mirroring evolving external auth. `ARCH-DRY`.
 - change-code plan-quality judge (fresh context) caught a real `ARCH-PURPOSE` shadow-sweep miss: `KAGGLE_FAKE=1` has **5** sites, and `e2e/e2e_test.go:56` was omitted from my first enumeration (tests stay green with the dead ref in place, so the "green" gate wouldn't catch it). Also flagged atlas:18. Folded both into the Plan/Done-when before implementing.
 - Implemented as planned. `go vet ./...` clean; `go test ./...` **all packages ok** (fake-kaggle, kaggle-download, kaggle-submit, e2e, internal/kagglecli incl. new `TestCLIError_Propagates`, pkg/kaggle). Grep confirms zero refs to `checkCredentials`/`CredentialSource`/`ErrNoCredentials`; remaining `KAGGLE_FAKE` hits are the unrelated `KAGGLE_FAKE_PRIOR_SCORE`.

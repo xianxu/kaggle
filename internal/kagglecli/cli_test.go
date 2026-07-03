@@ -69,11 +69,16 @@ func TestCLIError_Propagates(t *testing.T) {
 	t.Setenv("KAGGLE_CLI", stub)
 
 	c := New()
-	err := c.Download("titanic", t.TempDir())
-	if err == nil {
-		t.Fatal("Download against a failing CLI: want error, got nil")
+	// Both paths (run → output, and Submissions → output) must surface the
+	// CLI's stderr — cover each so neither error branch silently swallows it.
+	if err := c.Download("titanic", t.TempDir()); err == nil {
+		t.Error("Download against a failing CLI: want error, got nil")
+	} else if !strings.Contains(err.Error(), "no Kaggle API credentials found") {
+		t.Errorf("Download: wrapped error must carry the CLI's stderr; got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no Kaggle API credentials found") {
-		t.Errorf("wrapped error must carry the CLI's stderr; got: %v", err)
+	if _, err := c.Submissions("titanic"); err == nil {
+		t.Error("Submissions against a failing CLI: want error, got nil")
+	} else if !strings.Contains(err.Error(), "no Kaggle API credentials found") {
+		t.Errorf("Submissions: wrapped error must carry the CLI's stderr; got: %v", err)
 	}
 }
