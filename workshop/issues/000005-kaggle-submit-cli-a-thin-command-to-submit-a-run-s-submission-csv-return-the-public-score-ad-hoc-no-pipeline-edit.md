@@ -1,11 +1,12 @@
 ---
 id: 000005
-status: open
+status: working
 deps: []
 github_issue:
 created: 2026-07-06
 updated: 2026-07-06
 estimate_hours:
+started: 2026-07-06T23:13:17-07:00
 ---
 
 # kaggle submit CLI — a thin command to submit a run's submission.csv + return the public_score (ad-hoc, no pipeline edit)
