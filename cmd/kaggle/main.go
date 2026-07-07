@@ -80,7 +80,7 @@ func cmdSubmit(args []string, stdout io.Writer) error {
 		}
 	}
 	if comp == "" {
-		return fmt.Errorf("competition slug not found in the run record; pass -c <slug>")
+		return fmt.Errorf("competition slug required: pass -c <slug> (or use --run <id> with a record.json that has one)")
 	}
 
 	maxAttempts := submit.EnvInt("KAGGLE_SUBMIT_MAX_ATTEMPTS", 30)
@@ -90,7 +90,9 @@ func cmdSubmit(args []string, stdout io.Writer) error {
 		return err
 	}
 	if !scored {
-		return fmt.Errorf("%q not scored after %d attempts (status=%s)", comp, maxAttempts, sub.Status)
+		// status=error is a terminal rejection (fast-failed on attempt 1); a
+		// pending status means the poll budget (maxAttempts) was exhausted.
+		return fmt.Errorf("%q did not score (status=%s; polled up to %d attempts)", comp, sub.Status, maxAttempts)
 	}
 	fmt.Fprintf(stdout, "public_score: %g\n", *sub.PublicScore)
 	return nil

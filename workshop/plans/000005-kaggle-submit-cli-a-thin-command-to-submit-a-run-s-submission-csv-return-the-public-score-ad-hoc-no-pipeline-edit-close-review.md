@@ -51,3 +51,63 @@ None.
 
 ### 7. Plan revision recommendations
 None — the plan's Core-concepts table matches the code exactly (every listed entity exists at its stated path with the stated status: `pollScore`/`SubmitAndPoll`/`Submitter`/`EnvInt`/`EnvDuration` in `internal/submit`, `slugFromRecordJSON` in `cmd/kaggle/runref.go`; step `run()` modified as described). No `## Revisions` entry needed.
+
+---
+
+## Re-review — 2026-07-06T23:55:38-07:00 (FIX-THEN-SHIP)
+
+| field | value |
+|-------|-------|
+| issue | 5 — kaggle submit CLI — a thin command to submit a run's submission.csv + return the public_score (ad-hoc, no pipeline edit) |
+| repo | kaggle |
+| issue file | workshop/issues/000005-kaggle-submit-cli-a-thin-command-to-submit-a-run-s-submission-csv-return-the-public-score-ad-hoc-no-pipeline-edit.md |
+| boundary | whole-issue close |
+| milestone | — |
+| window | 9ff12bec7b626fd895139631ff3ea499b530ce96..HEAD |
+| command | sdlc close --issue 5 |
+| reviewer | claude |
+| timestamp | 2026-07-06T23:55:38-07:00 |
+| verdict | FIX-THEN-SHIP |
+
+## Review
+
+Ignoring 6 permissions.allow entries from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/Users/xianxu/workspace/kaggle"].hasTrustDialogAccepted: true in /Users/xianxu/.claude.json.
+I have everything I need. Confirmed: `bin/kaggle` is auto-built by the generic `cmd/*/` scanner (`Makefile.workflow:739`), the metis run-record shape (`steps[].with` map, `record.json` at `runDir/record.json`, step outputs at `runDir/<step.ID>/`) matches `slugFromRecordJSON` and the `runs/<id>/submission/submission.csv` path, and `*sub.PublicScore` is nil-safe. One concrete finding: `internal/submit/env_test.go` is not gofmt-clean.
+
+```verdict
+verdict: FIX-THEN-SHIP
+confidence: high
+```
+
+This boundary delivers the issue's purpose cleanly and honestly. The submit→poll→score core was **genuinely extracted** (not copied) into `internal/submit`, and I verified **both** consumers derive from it — the step (`cmd/kaggle-submit/main.go:64-66`) and the new CLI (`cmd/kaggle/main.go:86-88`), with the old `pollScore`/`envInt`/`envDuration` fully deleted from the step's `package main` (no orphaned duplicate remains). `go build ./...`, `go vet ./...`, and `go test ./...` all pass; the step's `TestRun_*` integration tests are unchanged and green, proving the refactor is behavior-preserving. I independently confirmed against the *real* metis `RunRecord` (`metis/pkg/record/record.go:56-81`) that the auto-slug path (`steps[].with.competition.slug`) and the on-disk paths (`runDir/record.json`, `runDir/<step.ID>/`) are real, not a fake-only mirage — so the headline "`kaggle submit --run winner`, no `-c`" flow is sound. The prior close-review's one Important (untested `EnvInt`/`EnvDuration`) is now addressed by `internal/submit/env_test.go`, and its Minor `submit --help` wart is fixed (`main.go:48,54-57`). Nothing blocks SHIP; the sole actionable fix is a gofmt nit, everything else is optional polish.
+
+### 1. Strengths
+- **ARCH-DRY fully honored — no residual duplicate.** The subtle newest-submission correlation (`subs[0]`/`wantFile`, *not* `LatestScored`) now lives in exactly one place (`internal/submit/submit.go:55`) with its 4-case regression test moved alongside (`internal/submit/submit_test.go`). I confirmed the step file no longer contains any copy.
+- **ARCH-PURE clean.** `pollScore` takes injected `submissionsFn` + `sleep`; real `time.Sleep` is wrapped only in the thin `SubmitAndPoll` glue (`submit.go:37`). `slugFromRecordJSON` is pure and injected into a thin caller. `run(args, stdout io.Writer)` threads the writer so tests assert on a `bytes.Buffer` — no `os.Stdout` swap.
+- **Zero-metis-dependency preserved and correct.** The 6-line local `slugFromRecordJSON` struct matches metis's `StepRecord.With map[string]any` / `RunRecord.Steps` shape exactly without importing `metis/pkg/record` — consistent with `internal/stepio`'s declare-locally posture, and `-c` is the always-works override.
+- **Nil-deref safe.** `Scored()` is `PublicScore != nil` (`pkg/kaggle/submission.go:25`), and `pollScore` returns `scored=true` only via `newest.Scored()`, so `*sub.PublicScore` (`main.go:95`) can never deref nil.
+- **Atlas updated** for both new surfaces (`internal/submit`, `cmd/kaggle`) in the same window; the `bin/kaggle` "auto-built by the `cmd/*` scan" claim checks out against `Makefile.workflow:739`.
+
+### 2. Critical findings
+None.
+
+### 3. Important findings
+None. (The prior review's Important — exported `EnvInt`/`EnvDuration` untested — is resolved by `internal/submit/env_test.go`, which covers the empty→default, malformed→warn, and bare-integer→seconds branches.)
+
+### 4. Minor findings
+- **`internal/submit/env_test.go` is not gofmt-clean** — the `EnvDuration` table's trailing comments are misaligned; `gofmt -d` shows a diff (every other file in the diff is clean). Fix: `gofmt -w internal/submit/env_test.go`. Mechanical and certain — worth doing before crossing the boundary since it's the one hygiene regression in the tree.
+- `cmd/kaggle/main.go:93` — the `!scored` error reads `not scored after %d attempts (status=%s)` even for a terminal `status=error` rejection, which actually fast-fails on attempt 1 (the "after N attempts" wording is inaccurate for that case). The step distinguishes it (`cmd/kaggle-submit/main.go:78-79`, "submission rejected"); the CLI collapses it. Cosmetic error-message inconsistency, not a correctness issue.
+- `cmd/kaggle/main.go:83` — the slug-missing error says `not found in the run record; pass -c` even in the pure `-f` case where no run record was consulted; the `pass -c` half is still actionable, but the "in the run record" clause is misleading there.
+- `cmd/kaggle/main.go:95` — `%g` can render scientific notation for extreme scores (e.g. a large RMSE → `1.23e+06`). Display-only; the step side persists the canonical float to `metrics.json`, so this is purely the human-facing print.
+
+### 5. Test coverage notes
+- Strong where it counts: `pollScore` (4 cases incl. prior-scored regression + terminal-error fast-fail), `SubmitAndPoll` (fake `Submitter`), `slugFromRecordJSON` (6 cases incl. malformed/empty-slug), CLI submit (run-resolve, `-c`, `-f`, slug-missing, needs-run-or-file, help/unknown), `EnvInt`/`EnvDuration`, and the step's integration tests retained. The `-f` arbitrary-basename correlation is exercised end-to-end through the real fake (`TestSubmit_FFlagExplicitPath` → fake stores `filepath.Base`, `SubmitAndPoll` matches it).
+- Untested-but-trivial passthroughs (not blocking): `SubmitAndPoll`'s `cli.Submit`-returns-error branch (`submit.go:30`) and the CLI's `!scored` timeout-error branch (`main.go:92-93`) — both one-line passthroughs whose underlying logic (`pollScore` timeout) is covered in `internal/submit`.
+
+### 6. Architectural notes for upcoming work
+- **`-f` correlation vs real Kaggle (live-verify backlog).** The poll correlates on `filepath.Base(csvPath) == subs[0].File`. The step always submits a fixed `submission.csv`, but the CLI's `-f` widens exposure to arbitrary basenames — if real Kaggle's `submissions --csv` echoes a filename that differs from the local basename, the poll would exhaust and report a false timeout despite a successful score. This is the documented fake/real blind spot (`cmd/fake-kaggle/main.go:9-13`), acceptable under the M2 live-Kaggle-deferred posture (kbench#1), but it's the first thing to pin on the first live capture.
+- **ARCH-PURPOSE:** "print and/or record the score" — print is delivered; write-back into `record.json` is legitimately deferred (metis `#13` immutability). If a future issue picks up recording, route it through a metis-owned mutation path rather than having the kaggle CLI write metis's record — keep the zero-dep, immutable-record posture intact.
+- `Submitter` is a well-scoped 2-method seam; if a future verb needs `Download`, extend via a separate interface rather than widening this one, to keep the poll path's dependency minimal.
+
+### 7. Plan revision recommendations
+None. The plan's Core-concepts table matches the code exactly: `pollScore`/`SubmitAndPoll`/`Submitter`/`EnvInt`/`EnvDuration` in `internal/submit`, `slugFromRecordJSON` in `cmd/kaggle/runref.go`, step `run()` modified as described — every entity exists at its stated path with the stated status. No `## Revisions` entry needed.

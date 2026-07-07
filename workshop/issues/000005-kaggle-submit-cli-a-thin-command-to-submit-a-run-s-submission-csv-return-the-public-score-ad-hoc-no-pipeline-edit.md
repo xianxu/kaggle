@@ -73,6 +73,7 @@ Single-boundary (plain checkboxes, one `sdlc close`).
 ## Log
 
 ### 2026-07-06
+- 2026-07-06: closed — Re-close after addressing the FIX-THEN-SHIP review. Fixed the Important finding: added internal/submit/env_test.go covering EnvInt/EnvDuration (empty→default, valid, malformed-warn, Go-duration, bare-int→seconds). Fixed a Minor: kaggle submit --help now prints clean usage + exit 0. go test ./... all green. No behavior change to the shipped submit/CLI path — added test + a help-UX fix only.; review verdict: FIX-THEN-SHIP
 - 2026-07-06: closed — Thin kaggle submit CLI reusing the SAME submit+poll+auth path as the kaggle/submit step. Extracted internal/submit (SubmitAndPoll+pollScore+Env helpers) from cmd/kaggle-submit package main; step refactored to consume it (shared helper, not a copy) — its TestRun_* integration tests unchanged + green (behavior-preserving). New cmd/kaggle: submit --run resolves runs/<id>/submission/submission.csv + slug from record.json (local parse, no metis import) or -c/-f. PROOF: built-binary smoke `KAGGLE_CLI=<fake> bin/kaggle submit --run winner` → public_score: 0.775 exit 0 (no -c, no pipeline edit); hermetic cmd/kaggle tests (--run auto-slug, -c, -f, slug-missing, help) + go test ./... all green. Both change-code judges INFO. actual 0.60 clean single-issue window.; review verdict: FIX-THEN-SHIP
 - Filed from the layering discussion (operator): submit is a Kaggle concern (a step + a thin CLI),
   not a run verb. Closes the awkward offline-sweep → promote-winner → submit-that-one-file flow

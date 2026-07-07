@@ -30,11 +30,11 @@ func TestEnvDuration(t *testing.T) {
 		set  bool
 		want time.Duration
 	}{
-		{set: false, want: def},                     // unset → default
-		{val: "0", set: true, want: 0},              // Go duration "0"
+		{set: false, want: def},                                 // unset → default
+		{val: "0", set: true, want: 0},                          // Go duration "0"
 		{val: "250ms", set: true, want: 250 * time.Millisecond}, // Go duration
-		{val: "3", set: true, want: 3 * time.Second}, // bare integer → seconds
-		{val: "garbage", set: true, want: def},       // malformed → default (warns)
+		{val: "3", set: true, want: 3 * time.Second},            // bare integer → seconds
+		{val: "garbage", set: true, want: def},                  // malformed → default (warns)
 	}
 	for _, c := range cases {
 		if c.set {
