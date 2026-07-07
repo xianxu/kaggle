@@ -45,11 +45,16 @@ func run(args []string, stdout io.Writer) error {
 
 func cmdSubmit(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // we own the usage/error surface (main prefixes "kaggle:")
 	runID := fs.String("run", "", "run id → runs/<id>/submission/submission.csv")
 	file := fs.String("f", "", "explicit submission.csv path (overrides --run)")
 	slug := fs.String("c", "", "competition slug (overrides the run record)")
 	msg := fs.String("m", "", "submission message")
 	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp { // `kaggle submit -h/--help` → clean usage, exit 0
+			fmt.Fprintln(stdout, usage)
+			return nil
+		}
 		return err
 	}
 

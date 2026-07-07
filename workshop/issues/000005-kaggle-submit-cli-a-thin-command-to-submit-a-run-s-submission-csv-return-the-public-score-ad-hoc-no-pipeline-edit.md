@@ -1,12 +1,13 @@
 ---
 id: 000005
-status: working
+status: codecomplete
 deps: []
 github_issue:
 created: 2026-07-06
 updated: 2026-07-06
 estimate_hours: 1.35
 started: 2026-07-06T23:13:17-07:00
+actual_hours: 0.60
 ---
 
 # kaggle submit CLI — a thin command to submit a run's submission.csv + return the public_score (ad-hoc, no pipeline edit)
@@ -72,6 +73,7 @@ Single-boundary (plain checkboxes, one `sdlc close`).
 ## Log
 
 ### 2026-07-06
+- 2026-07-06: closed — Thin kaggle submit CLI reusing the SAME submit+poll+auth path as the kaggle/submit step. Extracted internal/submit (SubmitAndPoll+pollScore+Env helpers) from cmd/kaggle-submit package main; step refactored to consume it (shared helper, not a copy) — its TestRun_* integration tests unchanged + green (behavior-preserving). New cmd/kaggle: submit --run resolves runs/<id>/submission/submission.csv + slug from record.json (local parse, no metis import) or -c/-f. PROOF: built-binary smoke `KAGGLE_CLI=<fake> bin/kaggle submit --run winner` → public_score: 0.775 exit 0 (no -c, no pipeline edit); hermetic cmd/kaggle tests (--run auto-slug, -c, -f, slug-missing, help) + go test ./... all green. Both change-code judges INFO. actual 0.60 clean single-issue window.; review verdict: FIX-THEN-SHIP
 - Filed from the layering discussion (operator): submit is a Kaggle concern (a step + a thin CLI),
   not a run verb. Closes the awkward offline-sweep → promote-winner → submit-that-one-file flow
   (metis-v1 kbench#4's operator step) without editing the experiment.

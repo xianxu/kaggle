@@ -116,4 +116,12 @@ func TestRun_HelpAndUnknown(t *testing.T) {
 	if err := run([]string{"bogus"}, &bytes.Buffer{}); err == nil {
 		t.Error("unknown subcommand should error")
 	}
+	// `kaggle submit --help` → clean usage on stdout, exit 0 (not flag.ErrHelp/exit 1).
+	var subHelp bytes.Buffer
+	if err := run([]string{"submit", "--help"}, &subHelp); err != nil {
+		t.Errorf("submit --help: unexpected error %v", err)
+	}
+	if !strings.Contains(subHelp.String(), "kaggle submit") {
+		t.Errorf("submit --help should print usage; got %q", subHelp.String())
+	}
 }
