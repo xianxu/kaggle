@@ -125,3 +125,27 @@ func TestRun_HelpAndUnknown(t *testing.T) {
 		t.Errorf("submit --help should print usage; got %q", subHelp.String())
 	}
 }
+
+// TestSubmit_DashCDirAnchorsRunsFromForeignCwd (metis#34): `-C <pipeline dir>` anchors
+// runs/<id> so submit works from ANY cwd — the one surface the #34 audit found genuinely
+// cwd-dependent. Same fixture as RunResolvesAndScores, but cwd is an unrelated dir.
+func TestSubmit_DashCDirAnchorsRunsFromForeignCwd(t *testing.T) {
+	scoreEnv(t)
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, "runs", "winner", "submission", "submission.csv"), "PassengerId,Survived\n892,0\n")
+	writeFile(t, filepath.Join(ws, "runs", "winner", "record.json"),
+		`{"steps":[{"step_id":"download","with":{"competition":{"slug":"titanic"}}}]}`)
+	t.Chdir(t.TempDir()) // foreign cwd — without -C this exact invocation fails
+
+	var out bytes.Buffer
+	if err := run([]string{"submit", "-C", ws, "--run", "winner"}, &out); err != nil {
+		t.Fatalf("run with -C: %v", err)
+	}
+	if !strings.Contains(out.String(), "public_score: 0.775") {
+		t.Fatalf("want scored submit via -C anchor; got %q", out.String())
+	}
+	// and the failure mode names the anchor: no -C from the foreign cwd
+	if err := run([]string{"submit", "--run", "winner"}, &out); err == nil || !strings.Contains(err.Error(), "-C") {
+		t.Errorf("foreign-cwd submit without -C must fail mentioning -C; got %v", err)
+	}
+}

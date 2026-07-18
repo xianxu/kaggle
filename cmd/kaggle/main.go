@@ -16,7 +16,7 @@ import (
 	"github.com/xianxu/kaggle/internal/submit"
 )
 
-const usage = "usage: kaggle submit [--run <id> | -f <file>] [-c <slug>] [-m <msg>]"
+const usage = "usage: kaggle submit [-C <pipeline-dir>] [--run <id> | -f <file>] [-c <slug>] [-m <msg>]"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -47,6 +47,7 @@ func cmdSubmit(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // we own the usage/error surface (main prefixes "kaggle:")
 	runID := fs.String("run", "", "run id → runs/<id>/submission/submission.csv")
+	dir := fs.String("C", ".", "pipeline dir anchoring runs/ (like git -C) — metis#34: submit from any cwd")
 	file := fs.String("f", "", "explicit submission.csv path (overrides --run)")
 	slug := fs.String("c", "", "competition slug (overrides the run record)")
 	msg := fs.String("m", "", "submission message")
@@ -63,17 +64,17 @@ func cmdSubmit(args []string, stdout io.Writer) error {
 		if *runID == "" {
 			return fmt.Errorf("need --run <id> or -f <file>")
 		}
-		csvPath = filepath.Join("runs", *runID, "submission", "submission.csv")
+		csvPath = filepath.Join(*dir, "runs", *runID, "submission", "submission.csv")
 	}
 	if _, err := os.Stat(csvPath); err != nil {
-		return fmt.Errorf("submission csv %s: %w", csvPath, err)
+		return fmt.Errorf("submission csv %s: %w (runs/ is anchored at -C %q — pass -C <pipeline dir> when invoking from elsewhere)", csvPath, err, *dir)
 	}
 
 	comp := *slug
 	if comp == "" && *runID != "" {
 		// Best-effort: read the slug from the run's record.json (a kaggle step's
 		// resolved `with`). -c overrides; absence is not fatal here.
-		if b, err := os.ReadFile(filepath.Join("runs", *runID, "record.json")); err == nil {
+		if b, err := os.ReadFile(filepath.Join(*dir, "runs", *runID, "record.json")); err == nil {
 			if s, ok := slugFromRecordJSON(b); ok {
 				comp = s
 			}
