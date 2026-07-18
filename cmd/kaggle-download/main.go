@@ -22,6 +22,13 @@ import (
 // downloadWith is this step's `with` config, read from with.json.
 type downloadWith struct {
 	Competition kaggle.Competition `json:"competition"`
+	// Sha256 declares the expected content identity of the download, per extracted
+	// file (metis#25, fixed-output-derivation): {slash-relative-name: sha256hex}.
+	// Present → verified after unzip, mismatch/missing/extra FAILS the step loudly.
+	// Absent → the step prints a paste-ready pin block (unpinned ingest is loud).
+	// Because `with` is Kpre material in metis, editing a pin re-keys get-data and
+	// everything downstream — content identity rides the existing cache channel.
+	Sha256 map[string]string `json:"sha256"`
 }
 
 func main() {
@@ -66,6 +73,19 @@ func run() error {
 		if err := os.Remove(z); err != nil {
 			return err
 		}
+	}
+
+	// metis#25: content identity. Pins declared → verify (any drift fails the step,
+	// so a changed remote can never silently propagate downstream). No pins → loud
+	// note + a paste-ready block, so declaring identity is one paste away.
+	computed, err := verifyPins(ctx.StepDir, w.Sha256)
+	if err != nil {
+		return err
+	}
+	if len(w.Sha256) == 0 {
+		fmt.Fprintf(os.Stderr,
+			"kaggle/download: UNPINNED ingest — content identity not declared (metis#25); paste into this step's with:\n%s",
+			pinBlock(computed))
 	}
 	return nil
 }
