@@ -7,10 +7,20 @@
 // $KAGGLE_FAKE_SCORE_AFTER (default 1) submissions polls, then complete+scored —
 // so a consumer's poll loop actually iterates ≥1 time.
 //
-// SHARED BLIND SPOT: submissions output is produced via kaggle.FormatSubmissionsCSV
-// — the same schema pkg/kaggle parses — so the fake and parser can't drift from
-// EACH OTHER, but neither is validated against real Kaggle's wire format. That gap
-// closes only on the first live capture (see pkg/kaggle/testdata/submissions.csv).
+// SCHEMA PROVENANCE (kaggle#8, 2026-07-28): submissions output is produced via
+// kaggle.FormatSubmissionsCSV — the same schema pkg/kaggle parses — so fake and parser
+// can't drift from each other; and that schema is now VALIDATED against a live capture
+// (pkg/kaggle/testdata/submissions.csv) plus a live-conformance check
+// (internal/kagglecli/conformance_live_test.go). The former blind spot is closed.
+//
+// STATES THIS FAKE DOES NOT MODEL (deliberate, so nobody reads its behavior as the
+// contract):
+//   - complete-WITHOUT-score: real Kaggle reports SubmissionStatus.COMPLETE with an
+//     empty publicScore (captured: submission 54846753). Here complete and scored flip
+//     together in one transition, so Scored() and Status agree — on live they need not.
+//   - the prior row's "prior.csv" filename: on live EVERY row is submission.csv, which
+//     is why pollScore cannot correlate by name (kaggle#9). Kept unfaithful on purpose —
+//     flipping it to submission.csv is that issue's RED test.
 package main
 
 import (
@@ -27,14 +37,22 @@ import (
 )
 
 const (
-	fakeScore       = 0.775
-	fakeSubmittedAt = "2026-07-01T00:00:00Z" // fixed for deterministic tests
+	fakeScore = 0.775
+	// Live wire shape (kaggle#8 capture): space-separated, microseconds, NO timezone.
+	// Fixed value keeps tests deterministic.
+	fakeSubmittedAt = "2026-07-01 00:00:00.000000"
+	fakeRefBase     = 50000000 // refs are minted monotonically from here
 )
 
 type fakeState struct {
 	File    string `json:"file"`
 	Message string `json:"message"`
 	Polls   int    `json:"polls"`
+	// Ref is minted at submit and echoed at submissions — real Kaggle assigns an id per
+	// submission, and it is the only field that distinguishes one from another (every
+	// fileName is submission.csv on live; see kaggle#9). A fake that omitted it would
+	// leave the parser's ref column exercised only by unit tests, never through the seam.
+	Ref int `json:"ref"`
 }
 
 func main() {
@@ -138,7 +156,11 @@ func doSubmit(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := writeState(dir, *slug, fakeState{File: filepath.Base(*file), Message: *msg}); err != nil {
+	ref := fakeRefBase
+	if prev, err := readState(dir, *slug); err == nil && prev.Ref >= fakeRefBase {
+		ref = prev.Ref + 1 // monotonic: a resubmit to the same competition gets a new id
+	}
+	if err := writeState(dir, *slug, fakeState{File: filepath.Base(*file), Message: *msg, Ref: ref}); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "Successfully submitted to %s\n", *slug)
@@ -168,14 +190,17 @@ func doSubmissions(args []string, stdout io.Writer) error {
 		return err
 	}
 	sub := kaggle.Submission{
+		Ref:         strconv.Itoa(st.Ref),
 		File:        st.File,
 		Message:     st.Message,
 		SubmittedAt: fakeSubmittedAt,
 		Status:      kaggle.StatusPending,
+		StatusRaw:   kaggle.WireStatus(kaggle.StatusPending), // emit the WIRE spelling, not ours
 	}
 	if st.Polls > scoreAfter() { // async: scored only after N polls
 		score := fakeScore
 		sub.Status = kaggle.StatusComplete
+		sub.StatusRaw = kaggle.WireStatus(kaggle.StatusComplete)
 		sub.PublicScore = &score
 	}
 	// Newest-first: our just-submitted row leads. KAGGLE_FAKE_PRIOR_SCORE models a
@@ -185,10 +210,14 @@ func doSubmissions(args []string, stdout io.Writer) error {
 	rows := []kaggle.Submission{sub}
 	if prior, ok := priorScore(); ok {
 		rows = append(rows, kaggle.Submission{
-			File:        "prior.csv",
-			Message:     "prior submission",
-			SubmittedAt: "2026-06-30T00:00:00Z",
+			Ref:     strconv.Itoa(st.Ref - 1),
+			File:    "prior.csv",        // UNFAITHFUL: on live every row is submission.csv, so this
+			Message: "prior submission", // filename can't occur. Left in deliberately —
+			// internal/submit still correlates by filename, and kaggle#9 fixes that by
+			// correlating on Ref; flipping this to submission.csv is #9's RED test.
+			SubmittedAt: "2026-06-30 00:00:00.000000",
 			Status:      kaggle.StatusComplete,
+			StatusRaw:   kaggle.WireStatus(kaggle.StatusComplete),
 			PublicScore: &prior,
 		})
 	}

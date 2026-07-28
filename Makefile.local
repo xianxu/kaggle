@@ -1,0 +1,13 @@
+# kaggle-local make targets (hooked by the base Makefile's `-include Makefile.local`).
+# NOTE: `Makefile` itself is a SYMLINK to the ariadne base — never append here-specific
+# targets to it; they land in the shared base layer and follow every consumer repo.
+
+.PHONY: go-check
+# The repo's own gate. `-tags live` is VETTED (not run) on purpose: the live-conformance
+# test is excluded from every default build, so without this it can rot into a compile
+# error and nobody finds out until they reach for the drift check (kaggle#8 review (h)).
+go-check:
+	@test -z "$$(gofmt -l cmd internal pkg)" || { echo "gofmt needed:"; gofmt -l cmd internal pkg; exit 1; }
+	go vet ./...
+	go vet -tags live ./...
+	go test ./...

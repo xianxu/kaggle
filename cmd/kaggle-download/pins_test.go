@@ -34,12 +34,12 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 func TestVerifyPins_ComputesAndExcludesContractFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"train.csv":       "a,b\n1,2\n",
-		"sub/extra.csv":   "x\n",
-		"with.json":       `{"competition":{"slug":"t"}}`,
-		"metrics.json":    `{}`,
-		"reads.json":      `{}`,
-		"sub/reads.json":  "nested is data\n", // nested name-alike is a genuine artifact
+		"train.csv":      "a,b\n1,2\n",
+		"sub/extra.csv":  "x\n",
+		"with.json":      `{"competition":{"slug":"t"}}`,
+		"metrics.json":   `{}`,
+		"reads.json":     `{}`,
+		"sub/reads.json": "nested is data\n", // nested name-alike is a genuine artifact
 	})
 	computed, err := verifyPins(dir, nil)
 	if err != nil {

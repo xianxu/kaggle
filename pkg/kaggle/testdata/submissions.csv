@@ -1,9 +1,20 @@
-# AUTHORED fixture — NOT captured (this repo has no kaggle CLI). Provenance:
-# the Kaggle CLI docs for `kaggle competitions submissions --csv`. VALIDATE these
-# column names + the status vocabulary against the FIRST live capture; the fake
-# and the parser co-derive from this schema, so it is the one unverified point.
-# Rows are newest-first (Kaggle's ordering); the newest here is pending (unscored).
-fileName,date,description,status,publicScore,privateScore
-submission_pending.csv,2026-07-01T15:00:00Z,pending upload,pending,,
-submission_v2.csv,2026-07-01T14:30:00Z,rf baseline,complete,0.78229,0.77500
-submission_v1.csv,2026-07-01T12:00:00Z,logreg baseline,complete,0.76555,0.75200
+# CAPTURED fixture — real `kaggle competitions submissions <slug> --csv` output, NOT authored.
+# Source: workshop/captures/submissions-live-2026-07-28.csv (the immutable dated archive; this file
+# is the working fixture — re-capture adds a NEW dated archive, then updates this file).
+# Captured 2026-07-28 against rogii-wellbore-geology-prediction with the official Python CLI.
+# Schema facts this fixture pins (kaggle#8):
+#   - leading `ref` column = the numeric submission id
+#   - status values are Python enum reprs: `SubmissionStatus.COMPLETE` / `.PENDING`
+#   - date is space-separated with microseconds and NO timezone (not RFC3339)
+#   - COMPLETE does NOT imply scored — row 54846753 is complete with an empty publicScore
+#   - every fileName is `submission.csv` (see kaggle#9: it cannot correlate submissions)
+#   - descriptions are QUOTED when they contain commas (row 54996757) — real CSV, not split-on-comma
+# The final PENDING row is SHAPE-INFERRED, not captured: the `SubmissionStatus.PENDING` spelling was
+# observed in the CLI's table output while polling, but the archived --csv snapshot was taken after
+# everything scored. Supersede it with the first --csv capture taken mid-poll.
+ref,fileName,date,description,status,publicScore,privateScore
+55058575,submission.csv,2026-07-28 15:17:26.513000,p-dup-surface diagnosis: v9 with duplicate-well hash exclusion DISABLED (commons-parity leak test),SubmissionStatus.COMPLETE,9.662,
+55047852,submission.csv,2026-07-28 07:07:22.190000,commons-repro diagnosis: bernubritz LB7295 rebuild verbatim (their in-run CV printed 9.1812),SubmissionStatus.COMPLETE,7.701,
+54996757,submission.csv,2026-07-26 09:07:41.073000,"v9: seq fallback leg (in-kernel TCN, a-seq-blend) — LOO 9.164, matched-CV 9.544, all regimes helped",SubmissionStatus.COMPLETE,9.529,
+54846753,submission.csv,2026-07-20 06:28:33.097000,rogii baseline (kbench#18): hist_gbm_reg + typewell join via metis honest flow; offline held-out RMSE ~42; notebook passthrough,SubmissionStatus.COMPLETE,,
+55999999,submission.csv,2026-07-28 16:00:00.000000,SHAPE-INFERRED pending row (see header),SubmissionStatus.PENDING,,

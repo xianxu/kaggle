@@ -9,8 +9,8 @@ API/CLI?* → it lives here, not in metis. **Go owns the STATE; the official
 
 ### `pkg/kaggle` — pure state + parsers (IO-free, table-tested; ARCH-PURE)
 - **`Competition`** (`competition.go`) — thin config `{Slug, Metric, Deadline}` supplied by an experiment's `with`; `Validate()` requires a slug.
-- **`Submission`** (`submission.go`) — one upload's durable record `{Competition, File, Message, SubmittedAt, Status, PublicScore *float64}`, serialized as `submission.json`. `PublicScore` is a pointer because Kaggle scores **asynchronously** (nil until scored). `Scored()` reports non-nil. Status vocab: `pending|complete|error`.
-- **`ParseSubmissions` / `LatestScored` / `FormatSubmissionsCSV`** (`parse.go`) — the single CLI-text↔typed-state boundary. Header-driven CSV parse (column-by-name, order-independent; `#` comment lines skipped). `LatestScored` returns the newest scored row (Kaggle lists newest-first). Format is the inverse, used by the fake so fake+parser share **one** schema (`submissionsCSVHeader`) — ARCH-DRY.
+- **`Submission`** (`submission.go`) — one upload's durable record `{Competition, Ref, File, Message, SubmittedAt, Status, StatusRaw, PublicScore *float64}`, serialized as `submission.json`. `PublicScore` is a pointer because Kaggle scores **asynchronously** (nil until scored). `Scored()` reports non-nil. Status vocab (**NORMALIZED**): `pending|complete|error` — the wire format is a Python enum repr (`SubmissionStatus.COMPLETE`), reconciled by `NormalizeStatus` at parse; `StatusRaw` keeps the wire string. `Ref` is Kaggle's submission id. **`complete` does NOT imply scored** — live reports COMPLETE rows with an empty `publicScore`, so `Scored()` (not `Status`) is the test. `error` is SHAPE-INFERRED, never captured (kaggle#8).
+- **`ParseSubmissions` / `LatestScored` / `FormatSubmissionsCSV`** (`parse.go`) — the single CLI-text↔typed-state boundary. Header-driven CSV parse (column-by-name, order-independent) that also **normalizes the status vocabulary** — this is the one CLI-text↔typed-state boundary, so it is where Kaggle's wire spelling is reconciled, which is what keeps every downstream comparison correct without a call-site sweep. The parser is fixture-agnostic: it does NOT skip `#` comment lines (the fixture's provenance header is stripped by `stripComments` in `parse_test.go`). `LatestScored` returns the newest scored row (Kaggle lists newest-first). Format is the inverse, used by the fake so fake+parser share **one** schema (`submissionsCSVHeader`) — ARCH-DRY.
   - **Deferred (YAGNI):** `Leaderboard` — the public-score purpose is served off `Submission.PublicScore`; a full leaderboard record waits for a `kaggle/leaderboard` step.
 
 ### `internal/kagglecli` — the thin IO seam (ARCH-PURE boundary)
@@ -19,7 +19,7 @@ API/CLI?* → it lives here, not in metis. **Go owns the STATE; the official
 ### `cmd/fake-kaggle` — process-level fake (the deliverable's fake, not scaffolding)
 A real subprocess speaking `competitions {download, submit, submissions}`:
 - `download` writes a real-shaped **`.zip`** into `-p`. **Fixture-driven** (kaggle#2): if `KAGGLE_FAKE_DATA_DIR` is set, the zip carries every top-level file in that dir byte-for-byte (competition-agnostic — real column shapes for a full-thread e2e); unset → a minimal `PassengerId,Survived` stub (back-compat). A set-but-missing/empty dir errors (never a silent empty zip).
-- `submit` records state; `submissions` models the async **transition** — `pending` for the first `KAGGLE_FAKE_SCORE_AFTER` (default 1) polls, then `complete`+scored — so a consumer's poll loop iterates.
+- `submit` records state **and mints a monotonic `ref`**; `submissions` echoes it and models the async **transition** — `pending` for the first `KAGGLE_FAKE_SCORE_AFTER` (default 1) polls, then `complete`+scored — so a consumer's poll loop iterates. Rows are rendered in the **wire** vocabulary (`SubmissionStatus.PENDING`) and the live date shape, so fake-backed consumers see real shapes. **Two states it does NOT model** (recorded, not fixed): complete-without-score, and its prior row's `prior.csv` filename — live rows are all `submission.csv` (kaggle#9).
 - Output via `kaggle.FormatSubmissionsCSV` (shared schema).
 
 ### Fake / test contract (env)
@@ -28,9 +28,22 @@ A real subprocess speaking `competitions {download, submit, submissions}`:
 | `KAGGLE_CLI` | path to the binary `CLI` shells (`kaggle` by default; the fake in tests) |
 | `KAGGLE_FAKE_STATE` | dir where the fake keeps per-competition state |
 | `KAGGLE_FAKE_SCORE_AFTER` | polls before the fake reports a score (default 1) |
+| `KAGGLE_LIVE_CONFORMANCE` | set to `1` to opt into the live-conformance test (`-tags live`); unset ⇒ skip |
+| `KAGGLE_CONFORMANCE_SLUG` | competition the live-conformance test queries (must be one you have submissions in) |
 | `KAGGLE_FAKE_DATA_DIR` | dir whose top-level files the fake `download` serves byte-for-byte (kaggle#2); unset → the `PassengerId,Survived` stub |
 
-**Honesty caveat:** this repo has no `kaggle` CLI and no credentials, so the fake+e2e is the *verified* path; the live-Kaggle path is code-complete but **not live-verified**. `pkg/kaggle/testdata/submissions.csv` is an **authored** fixture (Kaggle-CLI-docs provenance) — its columns/status vocab must be validated against the first live capture; fake and parser co-derive from it, so it is the one unverified schema point.
+**Repo gate:** `make check` = gofmt + `go vet ./...` + **`go vet -tags live ./...`** + `go test ./...`.
+The live-tag vet is what keeps `conformance_live_test.go` compiling despite being excluded from the
+default build.
+
+**`workshop/captures/`** — dated, IMMUTABLE archives of real CLI output (`submissions-live-2026-07-28.csv`
+is the first). The canonical-copy rule: an archive file is never edited; `pkg/kaggle/testdata/` holds the
+working fixture, curated from an archive and citing it in its header. Re-capturing adds a NEW dated file,
+then updates the fixture. (Not registered in AGENTS.md's Directory Structure list on purpose — that file is
+composed from `construct/base.manifest`, so a local edit would be clobbered; registering `captures/` as a
+standard `workshop/` subdirectory is an ariadne base-layer change.)
+
+**Honesty caveat (UPDATED 2026-07-28, kaggle#8):** the schema is no longer authored — `pkg/kaggle/testdata/submissions.csv` is a **live capture** (archive: `workshop/captures/submissions-live-2026-07-28.csv`), and a `//go:build live` conformance test (`internal/kagglecli/conformance_live_test.go`, opt-in via `KAGGLE_LIVE_CONFORMANCE=1`, refuses to run against the fake) checks the header + status shape against the real CLI — **verified passing against live Kaggle, 18 rows**. The capture disproved the authored guess in four ways (status vocab, dropped `ref`, date shape, complete-without-score), two of which had silently disabled production code paths. Still unverified: the `ERROR` status spelling (never observed), and the code-competition submit form.
 
 ## Surface (M2) — step-types + integration
 
@@ -52,7 +65,7 @@ Reads `with.competition`, `CLI.Download` into the step dir (yields `<slug>.zip`)
 Reads `with.competition` + `with.submission` (an **upstream step id**; the file is the conventional `submission.csv` at `UpstreamPath` — metis's id-naming convention, ARCH-DRY). Delegates the submit+poll core to **`internal/submit.SubmitAndPoll`** (shared with the ad-hoc `cmd/kaggle` CLI — kaggle#5); the step keeps only the step-specific tail (persist `submission.json` + `metrics.json`). On scored → `submission.json` (scored) + `metrics.json{public_score}`. **Timeout contract:** retries exhausted still-unscored → write `submission.json{status:pending}` (debug aid) and **exit non-zero** (an unscored run is a failed run → runner records `status:"failed"`).
 
 ### `internal/submit` — the shared submit→poll→score path (ARCH-DRY / ARCH-PURE, kaggle#5)
-`SubmitAndPoll(cli Submitter, slug, csv, msg, maxAttempts, delay)` = `cli.Submit` then `pollScore`; the **one** correct blocking poll used by BOTH the `kaggle/submit` step and the `kaggle submit` CLI, so they can't drift. `pollScore` correlates the score to **our newest submission** (`subs[0]`/`wantFile`), **not** `kaggle.LatestScored` (which would report an older already-scored submission's score for our pending upload); terminal `status=error` fast-fails; exhaustion times out safe. Clock is **injected** (`sleep func(int)`) so the poll is unit-tested pure with zero wall-clock. `EnvInt`/`EnvDuration` read the shared `KAGGLE_SUBMIT_MAX_ATTEMPTS`/`KAGGLE_SUBMIT_DELAY` knobs. `Submitter` is the minimal `{Submit,Submissions}` seam `kagglecli.CLI` satisfies — the poll never touches `os/exec`.
+`SubmitAndPoll(cli Submitter, slug, csv, msg, maxAttempts, delay)` = `cli.Submit` then `pollScore`; the **one** correct blocking poll used by BOTH the `kaggle/submit` step and the `kaggle submit` CLI, so they can't drift. `pollScore` correlates the score to the submission by **file name** — which the first live capture proved is a **no-op on live**: every row is `submission.csv`, so the guard cannot discriminate and a poll landing before our row registers can return a PREVIOUS run's score (**kaggle#9**, open; the fix is to correlate on `Ref`).
 
 ### `cmd/kaggle` → the thin user-facing CLI (kaggle#5) — `kaggle submit`
 `bin/kaggle` (auto-built by Makefile.workflow's cmd/* scan). First verb: **`kaggle submit [--run <id> | -f <file>] [-c <slug>] [-m <msg>]`** — the ad-hoc "offline sweep → promote a winner → submit that ONE run's `submission.csv` and tell me the score" flow, **no pipeline edit**. Resolution: file = `-f` else `runs/<id>/submission/submission.csv` (cwd-relative); slug = `-c` else best-effort `slugFromRecordJSON(runs/<id>/record.json)` (the first step `with.competition.slug` — a local minimal parse, **no metis import**, keeping the zero-dep posture) else an actionable "pass -c" error. Submits via the shared `internal/submit.SubmitAndPoll` (one submit/auth path with the step — same `kagglecli`/`${KAGGLE_CLI:-kaggle}` creds), **prints `public_score`** to stdout on success (non-zero exit + stderr note on timeout). Does NOT mutate the run record (keeps metis's `record.json` immutable; recording is a deferred follow-up). Same **M2 honesty** as the step: hermetic-fake-verified (green `cmd/kaggle` tests + a built-binary smoke), live-Kaggle path code-complete but not live-verified.
@@ -77,4 +90,4 @@ Mirror metis's committed-wrapper pattern (no build/codegen step): a `100755` bas
 | `KAGGLE_SUBMIT_MAX_ATTEMPTS` | submit poll attempts before timeout (default 30) |
 | `KAGGLE_SUBMIT_DELAY` | delay between polls; Go duration or bare seconds (default 5s) |
 
-**M2 honesty (carries M1's):** verified path = the fake + green e2e; the **live-Kaggle path is code-complete but NOT live-verified** (no CLI/creds here). The single unverified point gating the live path remains the **authored `pkg/kaggle/testdata/submissions.csv` schema** (column names / status vocab / score column) — fake + parser + submit + e2e all co-derive from it, so a wrong column passes the hermetic e2e green and only surfaces on the first live capture (operator / kbench#1).
+**M2 honesty (UPDATED 2026-07-28):** verified path = the fake + green e2e; the live-Kaggle path is now **partially live-verified** — the `submissions` schema is captured and conformance-checked (kaggle#8), while `download`/`submit` transport remain fake-verified only. The formerly-gating authored-fixture point is CLOSED.
