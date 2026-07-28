@@ -1,6 +1,7 @@
 package submit
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/xianxu/kaggle/pkg/kaggle"
@@ -143,5 +144,71 @@ func TestSubmitAndPoll_SubmitsThenScores(t *testing.T) {
 	}
 	if sub.PublicScore == nil || *sub.PublicScore != 0.775 {
 		t.Fatalf("score = %v, want 0.775", sub.PublicScore)
+	}
+}
+
+// kaggle#8 divergence 1, the LIVE-PATH regression: real Kaggle reports statuses as
+// Python enum reprs (`SubmissionStatus.ERROR`), not bare words. Before normalization
+// landed in ParseSubmissions, `newest.Status == kaggle.StatusError` here was
+// always-false on live, so a REJECTED submission never hit its terminal fast-fail —
+// it burned the entire poll budget and then reported a misleading timeout. This
+// asserts the behavior (fast-fail after ONE poll), not the literal.
+//
+// CAVEAT, deliberate: the `SubmissionStatus.ERROR` spelling is SHAPE-INFERRED from
+// the observed `SubmissionStatus.` prefix — no errored submission has ever been
+// captured. This test proves "a wire-shaped error status fast-fails"; it does NOT
+// validate that Kaggle spells it ERROR.
+func TestPollScore_WireErrorFastFails(t *testing.T) {
+	calls := 0
+	subFn := func() (string, error) {
+		calls++
+		return "ref,fileName,status,publicScore\n" +
+			"77,submission.csv,SubmissionStatus.ERROR,\n", nil
+	}
+	slept := 0
+	sub, scored, err := pollScore(subFn, "submission.csv", 5, func(int) { slept++ })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scored {
+		t.Error("an errored submission must not report scored")
+	}
+	if calls != 1 {
+		t.Errorf("want fast-fail after 1 poll, got %d — the terminal check is dead on live", calls)
+	}
+	if slept != 0 {
+		t.Errorf("fast-fail must not burn the poll budget, slept %d times", slept)
+	}
+	if sub.Status != kaggle.StatusError {
+		t.Errorf("status = %q, want normalized %q", sub.Status, kaggle.StatusError)
+	}
+	if sub.StatusRaw != "SubmissionStatus.ERROR" {
+		t.Errorf("wire spelling should be preserved for diagnostics, got %q", sub.StatusRaw)
+	}
+}
+
+// CROSS-REPO CONTRACT (kaggle#8): submission.json's `status` is consumed outside this
+// repo — kbench/e2e/thread_test.py asserts `submit["status"] == "complete"`. Storing
+// the raw wire value would silently break a peer's e2e; normalizing at the parse
+// boundary keeps the artifact vocabulary stable. StatusRaw is additive.
+func TestSubmissionJSONStatusIsNormalized(t *testing.T) {
+	subs, err := kaggle.ParseSubmissions("ref,fileName,status,publicScore\n" +
+		"77,submission.csv,SubmissionStatus.COMPLETE,0.5\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(subs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["status"] != "complete" {
+		t.Errorf("submission.json status = %v, want \"complete\" (kbench e2e asserts this)", got["status"])
+	}
+	if got["status_raw"] != "SubmissionStatus.COMPLETE" {
+		t.Errorf("status_raw = %v, want the wire spelling", got["status_raw"])
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/xianxu/kaggle/internal/kagglecli"
 	"github.com/xianxu/kaggle/internal/submit"
+	"github.com/xianxu/kaggle/pkg/kaggle"
 )
 
 const usage = "usage: kaggle submit [-C <pipeline-dir>] [--run <id> | -f <file>] [-c <slug>] [-m <msg>]"
@@ -93,8 +94,20 @@ func cmdSubmit(args []string, stdout io.Writer) error {
 	if !scored {
 		// status=error is a terminal rejection (fast-failed on attempt 1); a
 		// pending status means the poll budget (maxAttempts) was exhausted.
-		return fmt.Errorf("%q did not score (status=%s; polled up to %d attempts)", comp, sub.Status, maxAttempts)
+		return fmt.Errorf("%q did not score (status=%s; polled up to %d attempts)", comp, statusForMessage(sub), maxAttempts)
 	}
 	fmt.Fprintf(stdout, "public_score: %g\n", *sub.PublicScore)
 	return nil
+}
+
+// statusForMessage picks the status to show an operator: the WIRE spelling when we have
+// it (that is what Kaggle's own UI/API shows, so it is the searchable diagnostic), falling
+// back to the normalized word. The fallback is load-bearing, not defensive: on budget
+// exhaustion where our row never appeared, pollScore returns a synthetic pending record
+// that has no StatusRaw.
+func statusForMessage(sub kaggle.Submission) string {
+	if sub.StatusRaw != "" {
+		return sub.StatusRaw
+	}
+	return sub.Status
 }

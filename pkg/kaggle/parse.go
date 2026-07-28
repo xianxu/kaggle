@@ -7,14 +7,15 @@ import (
 	"strings"
 )
 
-// Column names of `kaggle competitions submissions --csv`. AUTHORED from the CLI
-// docs (see testdata/submissions.csv). Both ParseSubmissions (the consumer) and
+// Column names of `kaggle competitions submissions --csv`, VALIDATED against the
+// first live capture (kaggle#8; see testdata/submissions.csv and the dated archive
+// in workshop/captures/). Both ParseSubmissions (the consumer) and
 // FormatSubmissionsCSV (the fake's producer) derive from THIS one set, so they
-// cannot drift from EACH OTHER — but note the shared blind spot: because fake and
-// parser co-derive from this unvalidated schema, the fake structurally cannot
-// catch a divergence from real Kaggle's ACTUAL columns/status vocabulary. That gap
-// closes only by validating against the first live capture.
+// cannot drift from each other; the live-conformance test in internal/kagglecli
+// checks this set against the real CLI so they cannot silently drift from KAGGLE
+// either — the blind spot that made the pre-capture schema wrong in three ways.
 const (
+	colRef          = "ref"
 	colFileName     = "fileName"
 	colDate         = "date"
 	colDescription  = "description"
@@ -23,7 +24,16 @@ const (
 	colPrivateScore = "privateScore"
 )
 
-var submissionsCSVHeader = []string{colFileName, colDate, colDescription, colStatus, colPublicScore, colPrivateScore}
+var submissionsCSVHeader = []string{colRef, colFileName, colDate, colDescription, colStatus, colPublicScore, colPrivateScore}
+
+// SubmissionsCSVHeader returns the expected `--csv` column set. Exported for the
+// live-conformance test in internal/kagglecli, which must assert against the ONE
+// schema definition rather than restating the column list (ARCH-DRY).
+func SubmissionsCSVHeader() []string {
+	out := make([]string, len(submissionsCSVHeader))
+	copy(out, submissionsCSVHeader)
+	return out
+}
 
 // ParseSubmissions turns `kaggle competitions submissions --csv` stdout into typed
 // Submissions. Header-driven: columns are looked up by NAME, not index, so a CLI
@@ -33,8 +43,15 @@ var submissionsCSVHeader = []string{colFileName, colDate, colDescription, colSta
 // finds the newest validly-scored one. Pure — no IO. Competition is left empty (the
 // CLI output is already scoped by `-c <slug>`; the submit step fills it).
 //
+// It also NORMALIZES the status here — this is the single CLI-text↔typed-state
+// boundary, so it is the right and only place to reconcile Kaggle's wire
+// vocabulary (`SubmissionStatus.COMPLETE`) with the constants consumers compare
+// against. Status gets the normalized value, StatusRaw the wire string. Doing it
+// here is what keeps every downstream comparison correct without a call-site sweep,
+// and keeps submission.json's cross-repo shape stable (kaggle#8).
+//
 // The production parser is fixture-agnostic (no comment-line handling); the test
-// strips the authored fixture's provenance header before calling this.
+// strips the fixture's provenance header before calling this.
 func ParseSubmissions(out string) ([]Submission, error) {
 	if strings.TrimSpace(out) == "" {
 		return nil, nil
@@ -66,11 +83,14 @@ func ParseSubmissions(out string) ([]Submission, error) {
 		if len(row) == 0 {
 			continue
 		}
+		raw := get(row, colStatus)
 		s := Submission{
+			Ref:         get(row, colRef), // absent in pre-kaggle#8 captures -> ""
 			File:        get(row, colFileName),
 			SubmittedAt: get(row, colDate),
 			Message:     get(row, colDescription),
-			Status:      get(row, colStatus),
+			Status:      NormalizeStatus(raw), // the CLI↔state boundary is where the wire
+			StatusRaw:   raw,                  // vocabulary is reconciled — see submission.go
 		}
 		if ps := get(row, colPublicScore); ps != "" {
 			if v, err := strconv.ParseFloat(ps, 64); err == nil {
@@ -112,7 +132,14 @@ func FormatSubmissionsCSV(subs []Submission) string {
 		if s.PublicScore != nil {
 			score = strconv.FormatFloat(*s.PublicScore, 'f', -1, 64)
 		}
-		_ = w.Write([]string{s.File, s.SubmittedAt, s.Message, s.Status, score, ""})
+		// Wire fidelity is the DEFAULT, not an opt-in: a Submission built in code (the
+		// fake, tests) carries no StatusRaw, and falling back to the normalized word
+		// would render `complete` — a spelling Kaggle never emits. Derive it instead.
+		status := s.StatusRaw
+		if status == "" {
+			status = WireStatus(s.Status)
+		}
+		_ = w.Write([]string{s.Ref, s.File, s.SubmittedAt, s.Message, status, score, ""})
 	}
 	w.Flush()
 	return b.String()

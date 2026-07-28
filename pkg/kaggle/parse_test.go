@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// stripComments drops the authored fixture's `#` provenance header — the
-// production parser is fixture-agnostic (no comment handling), so the test that
-// feeds it the fixture strips the header itself.
+// stripComments drops the fixture's `#` provenance header — the production parser
+// is fixture-agnostic (no comment handling), so the test that feeds it the fixture
+// strips the header itself.
 func stripComments(s string) string {
 	var keep []string
 	for _, ln := range strings.Split(s, "\n") {
@@ -30,23 +30,71 @@ func TestParseSubmissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(subs) != 3 {
-		t.Fatalf("want 3 submissions, got %d: %+v", len(subs), subs)
+	if len(subs) != 5 {
+		t.Fatalf("want 5 submissions, got %d: %+v", len(subs), subs)
 	}
-	// Row 0 is the newest (pending) — no score.
-	if subs[0].Status != StatusPending || subs[0].Scored() {
-		t.Errorf("row0 want pending+unscored, got %+v", subs[0])
+	// Row 0 is the newest CAPTURED row: complete + scored, with the live wire spelling
+	// normalized and the raw preserved.
+	// A QUOTED, comma-bearing description must round-trip intact — 8 of the 18 captured
+	// rows have one, and a parser rewritten on strings.Split would pass every other test
+	// in this suite and then break on the first live poll.
+	var quoted *Submission
+	for i := range subs {
+		if subs[i].Ref == "54996757" {
+			quoted = &subs[i]
+		}
 	}
-	if subs[1].File != "submission_v2.csv" || !subs[1].Scored() || *subs[1].PublicScore != 0.78229 {
-		t.Errorf("row1 want scored submission_v2 @0.78229, got %+v", subs[1])
+	if quoted == nil {
+		t.Fatal("fixture lost the quoted comma-bearing row (54996757)")
 	}
-	// LatestScored skips the newest (pending) and returns the newest SCORED row.
+	if !strings.Contains(quoted.Message, "LOO 9.164, matched-CV 9.544") {
+		t.Errorf("quoted description lost its embedded commas: %q", quoted.Message)
+	}
+
+	if subs[0].Ref != "55058575" || subs[0].File != "submission.csv" {
+		t.Errorf("row0 ref/file wrong: %+v", subs[0])
+	}
+	if subs[0].Status != StatusComplete {
+		t.Errorf("row0 status should NORMALIZE to %q, got %q", StatusComplete, subs[0].Status)
+	}
+	if subs[0].StatusRaw != "SubmissionStatus.COMPLETE" {
+		t.Errorf("row0 should preserve the wire spelling, got %q", subs[0].StatusRaw)
+	}
+	if !subs[0].Scored() || *subs[0].PublicScore != 9.662 {
+		t.Errorf("row0 want scored @9.662, got %+v", subs[0])
+	}
+	// The live date shape: space-separated with microseconds, NO timezone.
+	if subs[0].SubmittedAt != "2026-07-28 15:17:26.513000" {
+		t.Errorf("row0 date shape drifted: %q", subs[0].SubmittedAt)
+	}
+
+	// DIVERGENCE 4 (captured, kaggle#8): COMPLETE does NOT imply scored. Submission
+	// 54846753 is complete with an empty publicScore — Scored() must be the test, and
+	// LatestScored must skip it.
+	var unscoredComplete *Submission
+	for i := range subs {
+		if subs[i].Ref == "54846753" {
+			unscoredComplete = &subs[i]
+		}
+	}
+	if unscoredComplete == nil {
+		t.Fatal("fixture lost the complete-but-unscored row (54846753)")
+	}
+	if unscoredComplete.Status != StatusComplete {
+		t.Errorf("54846753 should be complete, got %q", unscoredComplete.Status)
+	}
+	if unscoredComplete.Scored() {
+		t.Error("54846753 is COMPLETE with an empty publicScore — Scored() must be false")
+	}
+
+	// LatestScored returns the newest row carrying a score, skipping both the pending
+	// row and the complete-but-unscored one.
 	best, ok := LatestScored(subs)
 	if !ok {
 		t.Fatal("LatestScored: want ok=true")
 	}
-	if best.File != "submission_v2.csv" || *best.PublicScore != 0.78229 {
-		t.Errorf("LatestScored = %+v, want submission_v2 @0.78229", best)
+	if best.Ref != "55058575" || *best.PublicScore != 9.662 {
+		t.Errorf("LatestScored = %+v, want 55058575 @9.662", best)
 	}
 	// All-pending → ok=false.
 	if _, ok := LatestScored([]Submission{{Status: StatusPending}}); ok {
@@ -58,9 +106,74 @@ func TestParseSubmissions(t *testing.T) {
 	}
 }
 
+// The pending path: the live capture was taken after everything scored, so the
+// pending-unscored-LEADS case (which is what pollScore actually sees) is pinned with
+// a synthetic table rather than lost in the fixture swap.
+func TestLatestScoredSkipsLeadingPending(t *testing.T) {
+	csv := "ref,fileName,status,publicScore\n" +
+		"3,submission.csv,SubmissionStatus.PENDING,\n" +
+		"2,submission.csv,SubmissionStatus.COMPLETE,0.81\n"
+	subs, err := ParseSubmissions(csv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subs[0].Status != StatusPending || subs[0].Scored() {
+		t.Fatalf("row0 should be pending+unscored: %+v", subs[0])
+	}
+	best, ok := LatestScored(subs)
+	if !ok || best.Ref != "2" || *best.PublicScore != 0.81 {
+		t.Errorf("LatestScored should skip the leading pending row, got %+v ok=%v", best, ok)
+	}
+}
+
+// NormalizeStatus is TOTAL: it reconciles the wire vocabulary, and an UNKNOWN status
+// must pass through normalized-but-preserved rather than being rejected or coerced.
+// This package once shipped three constants that matched no live value (kaggle#8);
+// this is the regression that keeps the tolerance.
+func TestNormalizeStatus(t *testing.T) {
+	cases := map[string]string{
+		"SubmissionStatus.COMPLETE":     StatusComplete,
+		"SubmissionStatus.PENDING":      StatusPending,
+		"submissionstatus.complete":     StatusComplete, // case-folded prefix
+		"  SubmissionStatus.COMPLETE  ": StatusComplete,
+		"complete":                      StatusComplete, // already normalized
+		"SubmissionStatus.WEIRD":        "weird",        // unknown: preserved, not rejected
+		"":                              "",
+	}
+	for in, want := range cases {
+		if got := NormalizeStatus(in); got != want {
+			t.Errorf("NormalizeStatus(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// An unrecognized status must survive a full parse with the raw value intact.
+func TestParseSubmissionsUnknownStatusPreserved(t *testing.T) {
+	csv := "ref,fileName,status,publicScore\n9,submission.csv,SubmissionStatus.QUARANTINED,\n"
+	subs, err := ParseSubmissions(csv)
+	if err != nil {
+		t.Fatalf("an unknown status must not fail the parse: %v", err)
+	}
+	if subs[0].Status != "quarantined" || subs[0].StatusRaw != "SubmissionStatus.QUARANTINED" {
+		t.Errorf("unknown status not preserved: %+v", subs[0])
+	}
+}
+
+// Ref is optional: a pre-kaggle#8 capture (no ref column) must still parse.
+func TestParseSubmissionsRefOptional(t *testing.T) {
+	csv := "fileName,status,publicScore\nsubmission.csv,SubmissionStatus.COMPLETE,0.5\n"
+	subs, err := ParseSubmissions(csv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) != 1 || subs[0].Ref != "" || subs[0].Status != StatusComplete {
+		t.Fatalf("ref-less parse wrong: %+v", subs)
+	}
+}
+
 // Column order must not matter — parsing is header-driven.
 func TestParseSubmissionsReordered(t *testing.T) {
-	csv := "status,fileName,publicScore\ncomplete,x.csv,0.5\n"
+	csv := "status,fileName,publicScore\nSubmissionStatus.COMPLETE,x.csv,0.5\n"
 	subs, err := ParseSubmissions(csv)
 	if err != nil {
 		t.Fatal(err)
@@ -110,20 +223,43 @@ func TestParseSubmissionsMissingFileNameColumn(t *testing.T) {
 func TestFormatSubmissionsRoundTrip(t *testing.T) {
 	score := 0.775
 	in := []Submission{
-		{File: "a.csv", SubmittedAt: "2026-07-01T15:00:00Z", Message: "pending", Status: StatusPending},
-		{File: "b.csv", SubmittedAt: "2026-07-01T12:00:00Z", Message: "done", Status: StatusComplete, PublicScore: &score},
+		{Ref: "101", File: "submission.csv", SubmittedAt: "2026-07-01 15:00:00.000000", Message: "pending",
+			Status: StatusPending, StatusRaw: "SubmissionStatus.PENDING"},
+		{Ref: "100", File: "submission.csv", SubmittedAt: "2026-07-01 12:00:00.000000", Message: "done",
+			Status: StatusComplete, StatusRaw: "SubmissionStatus.COMPLETE", PublicScore: &score},
 	}
-	out, err := ParseSubmissions(FormatSubmissionsCSV(in))
+	rendered := FormatSubmissionsCSV(in)
+	// The fake renders the WIRE spelling, so consumers of the fake see real shapes.
+	if !strings.Contains(rendered, "SubmissionStatus.COMPLETE") {
+		t.Errorf("rendered CSV should carry the wire status spelling:\n%s", rendered)
+	}
+	out, err := ParseSubmissions(rendered)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 2 || out[0].File != "a.csv" || out[1].File != "b.csv" {
-		t.Fatalf("round-trip file mismatch: %+v", out)
+	if len(out) != 2 || out[0].Ref != "101" || out[1].Ref != "100" {
+		t.Fatalf("round-trip ref mismatch: %+v", out)
+	}
+	if out[0].Status != StatusPending || out[1].Status != StatusComplete {
+		t.Errorf("round-trip status mismatch: %+v", out)
 	}
 	if out[0].Scored() {
 		t.Error("pending row should round-trip unscored")
 	}
 	if !out[1].Scored() || *out[1].PublicScore != score {
 		t.Errorf("scored row lost score: %+v", out[1])
+	}
+}
+
+// The exported header is what the live-conformance test asserts against; it must
+// stay the single definition (ARCH-DRY) and must not be mutable by callers.
+func TestSubmissionsCSVHeaderExported(t *testing.T) {
+	h := SubmissionsCSVHeader()
+	if len(h) == 0 || h[0] != "ref" {
+		t.Fatalf("exported header wrong: %v", h)
+	}
+	h[0] = "mutated"
+	if SubmissionsCSVHeader()[0] != "ref" {
+		t.Error("SubmissionsCSVHeader must return a copy, not the package var")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xianxu/kaggle/pkg/kaggle"
@@ -170,5 +171,60 @@ func TestFakeDownloadServesFixtureBytesEndToEnd(t *testing.T) {
 	}
 	if found != train {
 		t.Errorf("unzipped train.csv = %q, want fixture bytes %q", found, train)
+	}
+}
+
+// kaggle#8 close-review (c): the fake's two new behaviors must be PINNED through the
+// process seam, or they can be deleted without a test noticing — which was true when
+// they landed, because every other assertion compares against the NORMALIZED constants
+// and the parser normalizes either spelling back to the same value.
+func TestFakeEmitsWireSpellingAndMintsRefs(t *testing.T) {
+	t.Setenv("KAGGLE_FAKE_STATE", t.TempDir())
+	t.Setenv("KAGGLE_FAKE_SCORE_AFTER", "1")
+
+	var out bytes.Buffer
+	if err := run([]string{"competitions", "submit", "-c", "titanic", "-f", "sub.csv", "-m", "one"}, &out); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	out.Reset()
+	if err := run([]string{"competitions", "submissions", "-c", "titanic", "--csv"}, &out); err != nil {
+		t.Fatalf("submissions: %v", err)
+	}
+	raw := out.String()
+
+	// The WIRE spelling, asserted on the raw stdout BEFORE parsing — parsing would
+	// normalize it away and the assertion would pass against either spelling.
+	if !strings.Contains(raw, kaggle.StatusWirePrefix) {
+		t.Errorf("fake stdout must carry the wire status spelling (%q), got:\n%s",
+			kaggle.StatusWirePrefix, raw)
+	}
+	if strings.Contains(raw, ",pending,") || strings.Contains(raw, ",complete,") {
+		t.Errorf("fake emitted a bare status word — Kaggle never does:\n%s", raw)
+	}
+
+	subs, err := kaggle.ParseSubmissions(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) == 0 || subs[0].Ref == "" {
+		t.Fatalf("fake must mint a ref (the field kaggle#8 added): %+v", subs)
+	}
+	first := subs[0].Ref
+
+	// A resubmit gets a STRICTLY GREATER ref — real Kaggle assigns a new id per
+	// submission, and kaggle#9 will correlate on exactly that ordering.
+	if err := run([]string{"competitions", "submit", "-c", "titanic", "-f", "sub.csv", "-m", "two"}, &out); err != nil {
+		t.Fatalf("resubmit: %v", err)
+	}
+	out.Reset()
+	if err := run([]string{"competitions", "submissions", "-c", "titanic", "--csv"}, &out); err != nil {
+		t.Fatalf("submissions#2: %v", err)
+	}
+	subs2, err := kaggle.ParseSubmissions(out.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subs2[0].Ref <= first {
+		t.Errorf("resubmit ref %q must be strictly greater than %q", subs2[0].Ref, first)
 	}
 }
