@@ -1,11 +1,12 @@
 ---
 id: 000008
-status: open
+status: working
 deps: []
 github_issue:
 created: 2026-07-28
 updated: 2026-07-28
 estimate_hours:
+started: 2026-07-28T10:24:27-07:00
 ---
 
 # Validate submissions --csv schema against first live capture (status vocab, ref column, date format)
