@@ -100,10 +100,21 @@ Each of these fails **silently** — the run succeeds, the numbers look plausibl
 - **The interactive mount is NOT the scoring mount.** Sample test entities visible while developing
   are generally *not* the scored ones. Anything keyed to specific test IDs behaves differently at
   scoring — verify such a mechanism by its **effect on the score**, never by the interactive log.
-- **The scoring environment DRIFTS.** Bit-identical code resubmitted two days later scored
-  **9.529 → 9.662** (+0.133 RMSE) — library versions moved under an in-kernel-trained component.
-  Same-day reruns were identical, so this is environment vintage, not seed noise. **Measure it**
-  (resubmit an unchanged version occasionally) and require the spend bar to exceed it.
+- **A cross-day score discrepancy is REAL but its mechanism is OPEN — do not attribute it without
+  checking.** Observed: near-identical builds scoring **9.529 → 9.662** (+0.133 RMSE) two days
+  apart. This was recorded here as "library versions moved under an in-kernel-trained component";
+  **that attribution is REFUTED (2026-07-29).** Pulling the run logs for every version of both
+  kernels shows the in-kernel training is **bit-identical** across all of them — same final loss to
+  three decimals, on every run, on every day (62.594 for one kernel, 57.612 for the other). Had the
+  libraries moved under the trained component, that number would have moved. Three *distinct* builds
+  also landed on **exactly** 9.662, which is positive evidence of determinism, not of drift. So the
+  discrepancy is not seed noise and not the trained leg — cause **unresolved**.
+  **Consequence, and this is the expensive part:** the unexamined ±0.133 propagated into a spend bar
+  and into a submission's pre-registered decision bands, widening both. A noise floor you have not
+  measured makes every subsequent reading less decisive than it really is. **The prescription stands
+  and has never actually been executed: resubmit a genuinely unchanged version and measure the
+  repeat.** Until then, treat "environment noise" as an unmeasured quantity, not a known constant —
+  and check the run logs before blaming the environment (§ the parity check in `metis-ml-research`).
 - **No internet** → dependencies ship as attached datasets (the "offline wheel" pattern), and anything
   learned offline must be inlined or attached.
 - **Quota** is weekly (`kaggle quota`); kernel runs consume GPU hours but **not** submission slots —
