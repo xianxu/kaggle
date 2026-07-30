@@ -100,14 +100,27 @@ Each of these fails **silently** — the run succeeds, the numbers look plausibl
 - **The interactive mount is NOT the scoring mount.** Sample test entities visible while developing
   are generally *not* the scored ones. Anything keyed to specific test IDs behaves differently at
   scoring — verify such a mechanism by its **effect on the score**, never by the interactive log.
+- **`kaggle kernels output <owner>/<kernel>/<version>` SILENTLY IGNORES THE VERSION and returns the
+  LATEST output.** It does not error, it does not warn — it hands you the newest run's files under
+  whatever version path you asked for. This makes every cross-version comparison built on it
+  vacuously "identical," which is the worst possible failure mode: it manufactures agreement.
+  Proved directly (2026-07-29): a log captured while version 4 was latest has md5 `95100f…` and reads
+  `[1503s] / 97s`; the same version re-fetched as `/4` after version 5 existed is byte-identical to
+  version 5's log (`aa7b08…`, `[1484s] / 100s`). A ledger finding about run-to-run determinism was
+  built on three such fetches and had to be corrected. **The only reliable capture is to pull the
+  output WHILE that version is the latest, and archive it yourself.** `kernels pull` (source) does
+  appear to honour the version; `kernels output` (files/log) does not. Verify before relying on either.
 - **A cross-day score discrepancy is REAL but its mechanism is OPEN — do not attribute it without
   checking.** Observed: near-identical builds scoring **9.529 → 9.662** (+0.133 RMSE) two days
   apart. This was recorded here as "library versions moved under an in-kernel-trained component";
-  **that attribution is REFUTED (2026-07-29).** Pulling the run logs for every version of both
-  kernels shows the in-kernel training is **bit-identical** across all of them — same final loss to
-  three decimals, on every run, on every day (62.594 for one kernel, 57.612 for the other). Had the
-  libraries moved under the trained component, that number would have moved. Three *distinct* builds
-  also landed on **exactly** 9.662, which is positive evidence of determinism, not of drift. So the
+  **that attribution is UNSUPPORTED (2026-07-29).** [Corrected same day: the first version of this
+  bullet said "refuted", citing bit-identical training across every version of both kernels. That
+  evidence was an artifact of the `kernels output` version bug above — the fetches all returned the
+  same latest log. The conclusion stands on weaker but real footing.] What genuinely supports it:
+  two independently captured runs (each pulled while it was the latest) end at an **identical final
+  training loss to three decimals** with different wall-clock, so the trained component IS
+  reproducible; and three *distinct* builds landed on **exactly** 9.662, which is agreement between
+  different code paths rather than drift between runs of the same one. So the
   discrepancy is not seed noise and not the trained leg — cause **unresolved**.
   **Consequence, and this is the expensive part:** the unexamined ±0.133 propagated into a spend bar
   and into a submission's pre-registered decision bands, widening both. A noise floor you have not
