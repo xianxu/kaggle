@@ -1,6 +1,5 @@
 # kaggle-local make targets (hooked by the base Makefile's `-include Makefile.local`).
-# NOTE: `Makefile` itself is a SYMLINK to the ariadne base — never append here-specific
-# targets to it; they land in the shared base layer and follow every consumer repo.
+# `Makefile` is repo-owned (seeded once by weave); it declares this layer's tools.
 
 .PHONY: go-check
 # The repo's own gate. `-tags live` is VETTED (not run) on purpose: the live-conformance
