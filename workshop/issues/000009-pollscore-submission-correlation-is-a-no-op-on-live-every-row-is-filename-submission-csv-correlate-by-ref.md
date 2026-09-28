@@ -6,6 +6,7 @@ github_issue:
 created: 2026-07-28
 updated: 2026-07-28
 estimate_hours:
+card_mirror: '1cb075e632df1531dc270695a2b927687e704cd7' # card fields mirrored from issue-cards; edit via sdlc
 ---
 
 # pollScore submission correlation is a no-op on live (every row is fileName=submission.csv) — correlate by ref

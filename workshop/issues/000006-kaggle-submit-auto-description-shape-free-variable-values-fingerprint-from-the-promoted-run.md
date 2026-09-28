@@ -6,6 +6,7 @@ github_issue:
 created: 2026-07-14
 updated: 2026-07-14
 estimate_hours:
+card_mirror: '069d66aff57467ecbd0fa0473011080ccaa829c9' # card fields mirrored from issue-cards; edit via sdlc
 ---
 
 # kaggle submit auto-description — shape + free-variable values + fingerprint from the promoted run

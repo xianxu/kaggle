@@ -6,6 +6,7 @@ github_issue:
 created: 2026-07-02
 updated: 2026-07-02
 estimate_hours:
+card_mirror: 'd000936605ceef3cb4276f6f81430d6d432dea6a' # card fields mirrored from issue-cards; edit via sdlc
 ---
 
 # submission↔run correlation: run-id in submit message + a fetch command (+ capture Kaggle's submission ref)

@@ -6,6 +6,7 @@ github_issue:
 created: 2026-07-14
 updated: 2026-07-14
 estimate_hours:
+card_mirror: '49b1653ab0ea74ba407cfe34bb64f8ca621e8781' # card fields mirrored from issue-cards; edit via sdlc
 ---
 
 # submit writes back a submission receipt — public_score + timestamp into the run dir
